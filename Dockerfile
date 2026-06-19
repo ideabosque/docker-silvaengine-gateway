@@ -23,15 +23,18 @@ RUN chmod 700 /root/.ssh && \
 # Add uv to PATH for all users
 ENV PATH="/root/.local/bin:$PATH"
 
-# Copy project dependency files
-COPY requirements.txt overrides.txt ./
+# Copy project dependency file
+COPY requirements.txt ./
 
 # Create virtual environment and install dependencies using uv.
 # The engine modules are NOT installed (they run from the /app/src bind mount);
-# requirements.txt provides their deps. overrides.txt nullifies the gateway's
-# bare-name engine dependencies so the gateway installs without them.
+# requirements.txt provides their deps. The gateway is then installed --no-deps
+# because its metadata lists the engines by bare name (not on PyPI); its real
+# deps are already satisfied by requirements.txt.
 RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python --overrides overrides.txt -r requirements.txt
+    uv pip install --python /opt/venv/bin/python -r requirements.txt && \
+    uv pip install --python /opt/venv/bin/python --no-deps \
+        "git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway"
 
 # Add virtual environment to PATH
 ENV PATH="/opt/venv/bin:$PATH"

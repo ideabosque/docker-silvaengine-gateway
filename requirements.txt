@@ -62,8 +62,8 @@ bcrypt
 passlib[bcrypt]>=1.7.4
 aiohttp
 
-# ── The gateway (provides the app / `silvaengine-gateway` console script) ─────
-# Installed WITH its deps, but its bare-name engine deps (knowledge_graph_engine,
-# ai_rfq_engine, mcp-daemon-engine) are nullified via overrides.txt — those run
-# from the /app/src mount, not from PyPI. See the Dockerfile install step.
-git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway
+# ── The gateway ──────────────────────────────────────────────────────────────
+# silvaengine_gateway is installed separately in the Dockerfile with --no-deps,
+# because its metadata declares the engine modules (knowledge_graph_engine,
+# ai_rfq_engine, mcp-daemon-engine) by bare name — those are not on PyPI; they
+# run from the /app/src mount. Its real third-party deps are listed above.
