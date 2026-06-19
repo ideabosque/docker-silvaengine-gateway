@@ -1,0 +1,69 @@
+# =============================================================================
+# SilvaEngine Gateway — container dependency set
+# =============================================================================
+# The gateway is a single FastAPI/uvicorn app that serves MCP (JSON-RPC), REST,
+# GraphQL, and SSE on one port. Private ideabosque repos are fetched over SSH
+# (the image copies a deploy key and trusts github.com — see Dockerfile).
+#
+# The ENGINE MODULES (knowledge_graph_engine, ai_rfq_engine, mcp_daemon_engine)
+# are NOT installed here. They are bind-mounted from host source into /app/src
+# and put on PYTHONPATH (see docker-compose.yml + SILVAENGINE_SRC). This file
+# installs only their THIRD-PARTY dependencies, the shared SilvaEngine libs, and
+# the gateway. Keep the engine-deps section in sync with each engine's
+# pyproject `dependencies` when they change.
+# =============================================================================
+
+# ── FastAPI stack + gateway serving deps ─────────────────────────────────────
+# (The gateway is installed --no-deps in the Dockerfile because its declared
+# deps include the engines by bare name; we provide its real deps here.)
+fastapi[all]>=0.110.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.9
+pydantic>=2.0
+pyyaml>=6.0
+boto3>=1.28.0
+
+# ── MCP tool-package runtime deps ────────────────────────────────────────────
+# MCP tool packages are extracted to /app/data/functs and imported at runtime,
+# so their third-party imports must be present in the venv. Add packages here as
+# tools require them. (mcp_hospirfq_processor imports `humps` -> pyhumps.)
+pyhumps>=3.8
+
+# ── Shared SilvaEngine libraries (git) ───────────────────────────────────────
+# silvaengine_constants MUST come first: silvaengine_utility imports it at module
+# load (graphql.py / http.py) but does NOT declare it as a dependency, so pip
+# won't pull it automatically.
+git+ssh://git@github.com/ideabosque/silvaengine_constants.git@main#egg=silvaengine_constants
+git+ssh://git@github.com/ideabosque/silvaengine_utility.git@main#egg=silvaengine_utility
+git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@main#egg=silvaengine_dynamodb_base
+git+ssh://git@github.com/ideabosque/silvaengine_connections.git@main#egg=silvaengine_connections
+git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
+
+# ── Engine third-party dependencies (engines run from the /app/src mount) ─────
+# knowledge_graph_engine:
+graphene>=3.3,<4
+graphql-core>=3.1,<3.3
+neo4j>=5.0,<6
+neo4j-graphrag>=1.0,<2
+openai>=1.0,<3
+numpy
+openpyxl
+pendulum>=3.0,<4
+promise
+nest-asyncio>=1.5
+python-dotenv>=1.0.0
+# ai_rfq_engine:
+tenacity
+# mcp_daemon_engine:
+mcp
+python-jose[cryptography]>=3.3.0
+httpx[http2]>=0.25.0
+bcrypt
+passlib[bcrypt]>=1.7.4
+aiohttp
+
+# ── The gateway (provides the app / `silvaengine-gateway` console script) ─────
+# Installed WITH its deps, but its bare-name engine deps (knowledge_graph_engine,
+# ai_rfq_engine, mcp-daemon-engine) are nullified via overrides.txt — those run
+# from the /app/src mount, not from PyPI. See the Dockerfile install step.
+git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway

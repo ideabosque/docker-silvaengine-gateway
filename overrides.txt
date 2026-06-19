@@ -1,0 +1,10 @@
+# uv dependency overrides (used via `uv pip install --overrides overrides.txt`).
+#
+# The silvaengine_gateway package declares the engine modules as dependencies by
+# bare name, but they are not on PyPI — they run from the /app/src bind mount.
+# Each override below replaces that dependency with an always-false environment
+# marker (`sys_platform == "never"`), so uv drops it instead of trying to resolve
+# it. The gateway's real third-party deps still resolve normally.
+knowledge-graph-engine ; sys_platform == "never"
+ai-rfq-engine ; sys_platform == "never"
+mcp-daemon-engine ; sys_platform == "never"

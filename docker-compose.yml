@@ -1,0 +1,42 @@
+services:
+  silvaengine-gateway:
+    build: .
+    container_name: silvaengine-gateway
+    env_file:
+      - .env
+    ports:
+      # host:container — container bind port is GATEWAY_PORT
+      - "${CONTAINER_PORT:-8765}:${GATEWAY_PORT:-8765}"
+    volumes:
+      - ./logs:/var/log/supervisor
+      - ./data:/app/data          # local user file, MCP package staging, etc.
+      # ── Engine source (generic mount) ────────────────────────────────────
+      # The engine MODULES are not installed in the image; they run from this
+      # bind mount. SILVAENGINE_SRC (.env) is the host path to the silvaengine
+      # repos; the whole tree is mounted read-only at /app/src. Only the engine
+      # repos listed in PYTHONPATH below are importable — everything else in the
+      # tree is ignored. Edit on the host, restart the container, no rebuild.
+      - ${SILVAENGINE_SRC:-../silvaengine}:/app/src:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      # PYTHONPATH (engine repo roots under /app/src) is supplied via .env / env_file.
+    restart: unless-stopped
+    healthcheck:
+      # /health is public (no auth) — see silvaengine_gateway routes
+      test: ["CMD", "curl", "-f", "http://localhost:${GATEWAY_PORT:-8000}/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+
+# Neo4j runs in its own container/compose project. Point the gateway at it via
+# `neo4j_uri` in .env. To reach a Neo4j on another compose network, attach this
+# service to that network, e.g.:
+#
+#     networks:
+#       default:
+#         name: <neo4j-compose-network>
+#         external: true
+#
+# and set `neo4j_uri=bolt://<neo4j-service-or-container>:7687` in .env.

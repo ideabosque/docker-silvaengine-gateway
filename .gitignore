@@ -1,0 +1,21 @@
+# Secrets & local config — never commit
+.env
+.ssh/*
+!.ssh/.gitkeep
+
+# Editor
+.vscode/
+
+# Runtime state (keep the dirs, drop the contents)
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+# Misc
+*.bak
+__pycache__/
+*.pyc
+
+.dockerignore
+.claude
