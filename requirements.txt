@@ -45,7 +45,7 @@ graphene>=3.3,<4
 graphql-core>=3.1,<3.3
 neo4j>=5.0,<6
 neo4j-graphrag>=1.0,<2
-openai>=1.0,<3
+openai>=1.40,<2          # KGE wants <3; openai_completions_agent_handler needs <2
 numpy
 openpyxl
 pendulum>=3.0,<4
@@ -61,6 +61,13 @@ httpx[http2]>=0.25.0
 bcrypt
 passlib[bcrypt]>=1.7.4
 aiohttp
+# ai_agent_core_engine (WebSocket streaming): deps (graphene, openai, boto3,
+# silvaengine_utility/dynamodb_base/constants) are all already covered above.
+# WebSocket transport itself is served by uvicorn[standard] (bundled websockets).
+# ai_agent_handler / openai_completions_agent_handler are loaded dynamically by
+# ai_agent_core_engine and run from the /app/src mount (see PYTHONPATH in .env);
+# their deps (openai, httpx, silvaengine_utility/dynamodb_base) are covered above.
+tiktoken                 # undeclared: ai_agent_core_engine uses it for GPT token counts
 
 # ── The gateway ──────────────────────────────────────────────────────────────
 # silvaengine_gateway is installed separately in the Dockerfile with --no-deps,
