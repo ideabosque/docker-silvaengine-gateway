@@ -17,7 +17,7 @@ program.
 
 | Protocol | Route (per registered module) | Notes |
 |---|---|---|
-| GraphQL | `POST /{ep}/knowledge_graph_graphql`, `/{ep}/ai_rfq_graphql`, `/{ep}/mcp_daemon_graphql` | One per module |
+| GraphQL | `POST /{ep}/knowledge_graph_graphql`, `/{ep}/rfq_graphql`, `/{ep}/mcp_daemon_graphql` | One per module |
 | REST / JSON-RPC | `POST /{ep}/mcp`, `POST /{ep}/extract`, cache admin, … | MCP JSON-RPC over HTTP |
 | SSE | `GET/POST /{ep}/sse` | Server-Sent Events stream + message |
 | MCP | JSON-RPC + SSE above | `mcp_daemon_engine` module |

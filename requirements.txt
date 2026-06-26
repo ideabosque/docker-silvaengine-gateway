@@ -5,7 +5,7 @@
 # GraphQL, and SSE on one port. Private ideabosque repos are fetched over SSH
 # (the image copies a deploy key and trusts github.com — see Dockerfile).
 #
-# The ENGINE MODULES (knowledge_graph_engine, ai_rfq_engine, mcp_daemon_engine)
+# The ENGINE MODULES (knowledge_graph_engine, rfq_engine, mcp_daemon_engine)
 # are NOT installed here. They are bind-mounted from host source into /app/src
 # and put on PYTHONPATH (see docker-compose.yml + SILVAENGINE_SRC). This file
 # installs only their THIRD-PARTY dependencies, the shared SilvaEngine libs, and
@@ -52,7 +52,7 @@ pendulum>=3.0,<4
 promise
 nest-asyncio>=1.5
 python-dotenv>=1.0.0
-# ai_rfq_engine:
+# rfq_engine:
 tenacity
 # mcp_daemon_engine:
 mcp
@@ -72,5 +72,5 @@ tiktoken                 # undeclared: ai_agent_core_engine uses it for GPT toke
 # ── The gateway ──────────────────────────────────────────────────────────────
 # silvaengine_gateway is installed separately in the Dockerfile with --no-deps,
 # because its metadata declares the engine modules (knowledge_graph_engine,
-# ai_rfq_engine, mcp-daemon-engine) by bare name — those are not on PyPI; they
+# rfq_engine, mcp-daemon-engine) by bare name — those are not on PyPI; they
 # run from the /app/src mount. Its real third-party deps are listed above.
