@@ -50,6 +50,7 @@ numpy
 openpyxl
 pendulum>=3.0,<4
 promise
+aiodataloader            # KGE batch loader (promise-based)
 nest-asyncio>=1.5
 python-dotenv>=1.0.0
 # rfq_engine:
@@ -68,6 +69,13 @@ aiohttp
 # ai_agent_core_engine and run from the /app/src mount (see PYTHONPATH in .env);
 # their deps (openai, httpx, silvaengine_utility/dynamodb_base) are covered above.
 tiktoken                 # undeclared: ai_agent_core_engine uses it for GPT token counts
+
+# ── PostgreSQL driver (shared by all engines when DB_BACKEND=postgresql) ─────
+# psycopg2-binary is placed at the end so it's clearly visible as a cross-cutting
+# dependency for rfq_engine, mcp_daemon_engine, knowledge_graph_engine, and
+# ai_agent_core_engine — all of which call _initialize_db_session() with the
+# postgresql+psycopg2 SQLAlchemy dialect when DB_BACKEND=postgresql.
+psycopg2-binary
 
 # ── The gateway ──────────────────────────────────────────────────────────────
 # silvaengine_gateway is installed separately in the Dockerfile with --no-deps,
