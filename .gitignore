@@ -12,6 +12,11 @@ data/*
 logs/*
 !logs/.gitkeep
 
+# Bundled DB host bind mounts (Neo4j / PostgreSQL data + logs)
+neo4j_data/
+postgres_data/
+postgres_logs/
+
 # Misc
 *.bak
 __pycache__/

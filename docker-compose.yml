@@ -20,23 +20,92 @@ services:
     environment:
       - PYTHONUNBUFFERED=1
       # PYTHONPATH (engine repo roots under /app/src) is supplied via .env / env_file.
+    # Wait for the bundled DBs only when their profile is active. required:false
+    # makes the dependency a no-op when the profile is off (external DBs).
+    depends_on:
+      neo4j:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     healthcheck:
       # /health is public (no auth) — see silvaengine_gateway routes
-      test: ["CMD", "curl", "-f", "http://localhost:${GATEWAY_PORT:-8000}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:${GATEWAY_PORT:-8765}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
     command: ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
 
-# Neo4j runs in its own container/compose project. Point the gateway at it via
-# `neo4j_uri` in .env. To reach a Neo4j on another compose network, attach this
-# service to that network, e.g.:
-#
-#     networks:
-#       default:
-#         name: <neo4j-compose-network>
-#         external: true
-#
-# and set `neo4j_uri=bolt://<neo4j-service-or-container>:7687` in .env.
+  # ── Optional bundled databases ─────────────────────────────────────────────
+  # These start ONLY when their profile is active (COMPOSE_PROFILES in .env).
+  # Leave COMPOSE_PROFILES empty to use external DBs; set e.g.
+  # COMPOSE_PROFILES=neo4j,postgres to bring them up. Settings mirror
+  # ../docker-neo4j and ../docker-postgresql.
+
+  # Knowledge Graph Engine backend. When enabled, set neo4j_uri=bolt://neo4j:7687
+  # in .env; NEO4J_AUTH must match neo4j_username/neo4j_password.
+  neo4j:
+    image: neo4j:${NEO4J_VERSION:-5-community}
+    container_name: ${NEO4J_CONTAINER_NAME:-silvaengine-neo4j}
+    profiles: ["neo4j"]
+    environment:
+      NEO4J_AUTH: ${NEO4J_AUTH:-neo4j/12345abc}
+      NEO4J_PLUGINS: '["apoc"]'
+      NEO4J_dbms_security_procedures_unrestricted: apoc.*
+      NEO4J_dbms_security_procedures_allowlist: apoc.*
+    ports:
+      - "${NEO4J_BROWSER_PORT:-7474}:7474"   # HTTP browser
+      - "${NEO4J_BOLT_PORT:-7687}:7687"      # Bolt
+    volumes:
+      # Host bind mounts (mirrors ../docker-neo4j). NEO4J_HOST_DIR in .env.
+      - ${NEO4J_HOST_DIR:-./neo4j_data}/data:/data
+      - ${NEO4J_HOST_DIR:-./neo4j_data}/logs:/logs
+      - ${NEO4J_HOST_DIR:-./neo4j_data}/import:/import
+      - ${NEO4J_HOST_DIR:-./neo4j_data}/plugins:/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # PostgreSQL backend (db_backend=postgresql). When enabled, set PG_HOST=postgres
+  # and db_backend=postgresql in .env; POSTGRES_* must match the PG_* vars.
+  postgres:
+    image: postgres:${POSTGRES_VERSION:-17-alpine}
+    container_name: ${POSTGRES_CONTAINER_NAME:-silvaengine-postgres}
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-silvaengine}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-silvaengine}
+      POSTGRES_DB: ${POSTGRES_DB:-silvaengine}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # Host bind mounts (mirrors ../docker-postgresql). Distinct host dirs so
+      # they don't collide with the gateway's own ./data and ./logs mounts.
+      - ${POSTGRES_DATA_PATH:-./postgres_data}:/var/lib/postgresql/data
+      - ${POSTGRES_LOG_PATH:-./postgres_logs}:/var/log/postgresql
+    command:
+      - "postgres"
+      - "-c"
+      - "logging_collector=on"
+      - "-c"
+      - "log_directory=/var/log/postgresql"
+      - "-c"
+      - "log_filename=postgresql-%Y-%m-%d.log"
+      - "-c"
+      - "log_statement=${LOG_STATEMENT:-none}"
+      - "-c"
+      - "log_min_duration_statement=${LOG_MIN_DURATION:-1000}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-silvaengine} -d ${POSTGRES_DB:-silvaengine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
