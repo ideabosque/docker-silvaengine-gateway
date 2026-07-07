@@ -36,6 +36,7 @@ pyhumps>=3.8
 git+ssh://git@github.com/ideabosque/silvaengine_constants.git@main#egg=silvaengine_constants
 git+ssh://git@github.com/ideabosque/silvaengine_utility.git@main#egg=silvaengine_utility
 git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@main#egg=silvaengine_dynamodb_base
+git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@main#egg=silvaengine_definitions
 git+ssh://git@github.com/ideabosque/silvaengine_connections.git@main#egg=silvaengine_connections
 git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
 
