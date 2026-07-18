@@ -39,6 +39,8 @@ git+ssh://git@github.com/ideabosque/silvaengine_dynamodb_base.git@main#egg=silva
 git+ssh://git@github.com/ideabosque/silvaengine_definitions.git@main#egg=silvaengine_definitions
 git+ssh://git@github.com/ideabosque/silvaengine_connections.git@main#egg=silvaengine_connections
 git+ssh://git@github.com/ideabosque/mcp_http_client.git@main#egg=mcp_http_client
+git+ssh://git@github.com/ideabosque/shopify_app_engine.git@main#egg=shopify_app_engine
+git+ssh://git@github.com/ideabosque/shopify_connector.git@main#egg=shopify_connector
 
 # ── Engine third-party dependencies (engines run from the /app/src mount) ─────
 # knowledge_graph_engine:
