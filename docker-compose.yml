@@ -29,6 +29,9 @@ services:
       postgres:
         condition: service_healthy
         required: false
+      redis:
+        condition: service_healthy
+        required: false
     restart: unless-stopped
     healthcheck:
       # /health is public (no auth) — see silvaengine_gateway routes
@@ -106,6 +109,27 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-silvaengine} -d ${POSTGRES_DB:-silvaengine}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis cache backend (silvaengine_utility HybridCacheEngine). The cache uses
+  # Redis only when cache_enabled=1 AND REDIS_HOST is set; otherwise it falls
+  # back to disk. When enabled, set REDIS_HOST=redis in .env. NOT in the default
+  # stack — start it with COMPOSE_PROFILES=...,redis.
+  redis:
+    image: redis:${REDIS_VERSION:-7-alpine}
+    container_name: ${REDIS_CONTAINER_NAME:-silvaengine-redis}
+    profiles: ["redis"]
+    # requirepass "" (empty REDIS_PASSWORD) => no auth. AOF persistence on.
+    command: redis-server --appendonly yes --requirepass "${REDIS_PASSWORD:-}"
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - ${REDIS_DATA_PATH:-./redis_data}:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"${REDIS_PASSWORD:-}\" --no-auth-warning ping | grep -q PONG"]
       interval: 10s
       timeout: 5s
       retries: 5
