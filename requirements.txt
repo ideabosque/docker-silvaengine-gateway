@@ -80,8 +80,8 @@ tiktoken                 # undeclared: ai_agent_core_engine uses it for GPT toke
 # postgresql+psycopg2 SQLAlchemy dialect when DB_BACKEND=postgresql.
 psycopg2-binary
 
-# ── The gateway ──────────────────────────────────────────────────────────────
-# silvaengine_gateway is installed separately in the Dockerfile with --no-deps,
-# because its metadata declares the engine modules (knowledge_graph_engine,
-# rfq_engine, mcp-daemon-engine) by bare name — those are not on PyPI; they
-# run from the /app/src mount. Its real third-party deps are listed above.
+# ── The gateway + engine modules ─────────────────────────────────────────────
+# silvaengine_gateway (and any opted-in engine modules) live in
+# requirements-modules.txt and are installed --no-deps in the Dockerfile — their
+# metadata declares engines by bare name (not on PyPI). Their real third-party
+# deps are listed above. By default the engines run from the /app/src mount.

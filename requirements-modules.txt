@@ -1,0 +1,39 @@
+# =============================================================================
+# SilvaEngine modules — installed --no-deps (see Dockerfile)
+# =============================================================================
+# Installed WITHOUT dependency resolution: silvaengine_gateway's metadata
+# declares the engine modules by bare name (knowledge_graph_engine, rfq_engine,
+# mcp-daemon-engine, ...) which are NOT on PyPI. Their real third-party deps and
+# the shared SilvaEngine libraries are provided by requirements.txt.
+#
+# By DEFAULT only the gateway is installed here — the engine modules run from the
+# host source mount (/app/src via PYTHONPATH; see docker-compose.yml + .env).
+# The engine lines below are provided but COMMENTED: uncomment one to bake it
+# into the image instead of running it from the mount (then drop that engine
+# from PYTHONPATH in .env so the installed copy is used).
+#
+# Fetched over git+ssh — the image copies a deploy key (see Dockerfile / README).
+# =============================================================================
+
+# ── Gateway (always installed; provides the FastAPI app) ─────────────────────
+git+ssh://git@github.com/ideabosque/silvaengine_gateway.git@main#egg=silvaengine_gateway
+
+# ── Optional engine modules (default: run from the /app/src mount) ────────────
+# Uncomment to install into the image instead of mounting, and remove the
+# matching /app/src/<name> entry from PYTHONPATH in .env.
+#
+# Engines registered by data/routes.yaml (each needs to be either mounted via
+# PYTHONPATH or installed here to actually load):
+# git+ssh://git@github.com/ideabosque/knowledge_graph_engine.git@main#egg=knowledge_graph_engine
+# git+ssh://git@github.com/ideabosque/rfq_engine.git@main#egg=rfq_engine
+# git+ssh://git@github.com/ideabosque/mcp_daemon_engine.git@main#egg=mcp_daemon_engine
+# git+ssh://git@github.com/ideabosque/ai_agent_core_engine.git@main#egg=ai_agent_core_engine
+# git+ssh://git@github.com/ideabosque/ai_coordination_engine.git@main#egg=ai_coordination_engine
+# git+ssh://git@github.com/ideabosque/a2a_daemon_engine.git@main#egg=a2a_daemon_engine
+# git+ssh://git@github.com/ideabosque/ai_marketing_engine.git@main#egg=ai_marketing_engine
+# git+ssh://git@github.com/ideabosque/client_engine.git@main#egg=client_engine
+# git+ssh://git@github.com/ideabosque/setting_core_engine.git@main#egg=setting_core_engine
+#
+# Agent handlers loaded dynamically by ai_agent_core_engine:
+# git+ssh://git@github.com/ideabosque/ai_agent_handler.git@main#egg=ai_agent_handler
+# git+ssh://git@github.com/ideabosque/openai_completions_agent_handler.git@main#egg=openai_completions_agent_handler
