@@ -82,13 +82,14 @@ services:
     image: postgres:${POSTGRES_VERSION:-17-alpine}
     container_name: ${POSTGRES_CONTAINER_NAME:-silvaengine-postgres}
     profiles: ["postgres"]
+    # Credentials/port come from the single PG_* source of truth (see .env).
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-silvaengine}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-silvaengine}
-      POSTGRES_DB: ${POSTGRES_DB:-silvaengine}
+      POSTGRES_USER: ${PG_USER:-silvaengine}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-silvaengine}
+      POSTGRES_DB: ${PG_DB:-silvaengine}
       PGDATA: /var/lib/postgresql/data/pgdata
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "${PG_PORT:-5432}:5432"
     volumes:
       # Host bind mounts (mirrors ../docker-postgresql). Distinct host dirs so
       # they don't collide with the gateway's own ./data and ./logs mounts.
@@ -108,7 +109,7 @@ services:
       - "log_min_duration_statement=${LOG_MIN_DURATION:-1000}"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-silvaengine} -d ${POSTGRES_DB:-silvaengine}"]
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER:-silvaengine} -d ${PG_DB:-silvaengine}"]
       interval: 10s
       timeout: 5s
       retries: 5
