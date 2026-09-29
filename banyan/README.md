@@ -109,7 +109,7 @@ bash deploy.sh --dry-run      # 环境检测/源码获取/配置/端口预检/�
 bash deploy.sh --restart     # 部署后重启 gateway（改种子 JSON 后使用）
 bash deploy.sh --force-build  # 强制重建镜像（默认源码未变自动跳过）
 bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变更）
-bash deploy.sh --self-test    # 内置纯逻辑自检（102 项，不碰 docker/podman）
+bash deploy.sh --self-test    # 内置纯逻辑自检（103 项，不碰 docker/podman）
 ```
 
 ### 十二个阶段

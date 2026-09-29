@@ -1565,6 +1565,8 @@ cmd_self_test() {
     "$(grep -cF '${NEO4J_HTTP_PORT:-7474}:7474' "$COMPOSE_FILE" || true)" "1"
   expect_eq "compose neo4j bolt 宿主端口插值" \
     "$(grep -cF '${NEO4J_BOLT_PORT:-7687}:7687' "$COMPOSE_FILE" || true)" "1"
+  expect_eq "compose ddb-init 以 root 读取 600 种子（uid 1000 读不了 root 600 bind）" \
+    "$(grep -cF 'user: "0:0"' "$COMPOSE_FILE" || true)" "1"
 
   # --- 超管键（阶段 11 admin-init）---
   expect_eq "ADMIN_ACCOUNT 默认值" "$(env_get ADMIN_ACCOUNT)" "admin@banyanos.dev"

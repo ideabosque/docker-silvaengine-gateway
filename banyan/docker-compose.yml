@@ -171,6 +171,11 @@ services:
     # bash -c "pip install boto3 && ..." 相比，消除部署期 pip 网络依赖。
     # deploy.sh 以 `compose run --rm` 驱动；up 服务清单不含本服务。
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    # 一次性初始化以 root 运行：种子 JSON 由 deploy.sh 以 root+umask 077 生成
+    # （600 root:root），镜像业务用户 uid 1000 无法读 bind-mount 的 600 文件
+    # （io-deployment 实测 Permission denied；本地 podman 因 virtiofs 权限压扁
+    # 未能暴露）。主机文件权限不放宽，init 任务 root 属可接受姿态。
+    user: "0:0"
     volumes:
       - ./scripts:/ddb:ro
       - ./env:/ddbenv:ro
