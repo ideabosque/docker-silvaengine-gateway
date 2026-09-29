@@ -338,6 +338,18 @@ port_busy() {
 # 阶段 1：运行时探测（docker 优先，podman 兜底）
 # ---------------------------------------------------------------------------
 
+# 阶段 1 兜底 die 文案：携带已探测到的 Docker 侧真实原因（可空）。
+# 服务器实例教训（2026-09-29 io-deployment）：docker 已装但用户不在 docker 组
+# 时，旧文案「未找到可用的 docker 或 podman」误导排障方向——实际原因
+# 已在 docker_reason 中探测到，必须带出。（独立小函数供 self-test 断言）
+runtime_missing_die_msg() {
+  if [ -n "${1:-}" ]; then
+    printf '未找到可用的 docker 或 podman（Docker 侧：%s）——请安装 Docker（含 Compose v2 插件）：https://docs.docker.com/engine/install/；本机 Podman 方案另需 docker-compose v2 或 podman-compose' "$1"
+  else
+    printf '未找到可用的 docker 或 podman——请安装 Docker（含 Compose v2 插件）：https://docs.docker.com/engine/install/；本机 Podman 方案另需 docker-compose v2 或 podman-compose'
+  fi
+}
+
 detect_runtime() {
   local out cv docker_reason=""
 
@@ -383,7 +395,7 @@ detect_runtime() {
     die "podman 已安装但守护进程/machine 未运行——macOS：podman machine start（无 machine 先 podman machine init）；Linux：检查 podman.socket（systemctl --user start podman.socket）。或修复 Docker：$docker_reason"
   fi
 
-  die "未找到可用的 docker 或 podman——请安装 Docker（含 Compose v2 插件）：https://docs.docker.com/engine/install/；本机 Podman 方案另需 docker-compose v2 或 podman-compose"
+  die "$(runtime_missing_die_msg "$docker_reason")"
 }
 
 # 容器健康状态（docker 用 .State.Health.Status；podman 用 .State.HealthStatus）
@@ -1506,6 +1518,14 @@ cmd_self_test() {
   else
     printf '  （跳过 git 夹具测试：宿主无 git）\n'
   fi
+
+  # --- runtime_missing_die_msg（阶段 1 兜底文案携带真实原因）---
+  expect_eq "runtime_missing_die_msg 携带 docker_reason（服务器实测案例）" \
+    "$(runtime_missing_die_msg "Docker 守护进程连接被拒（permission denied，用户可能不在 docker 组）")" \
+    "未找到可用的 docker 或 podman（Docker 侧：Docker 守护进程连接被拒（permission denied，用户可能不在 docker 组））——请安装 Docker（含 Compose v2 插件）：https://docs.docker.com/engine/install/；本机 Podman 方案另需 docker-compose v2 或 podman-compose"
+  expect_eq "runtime_missing_die_msg 无原因时保持原文案" \
+    "$(runtime_missing_die_msg)" \
+    "未找到可用的 docker 或 podman——请安装 Docker（含 Compose v2 插件）：https://docs.docker.com/engine/install/；本机 Podman 方案另需 docker-compose v2 或 podman-compose"
 
   # --- port_busy 空闲端口判定 ---
   local free_p="" p
