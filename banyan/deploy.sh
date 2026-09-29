@@ -390,18 +390,17 @@ detect_runtime() {
 
   if command -v docker >/dev/null 2>&1; then
     if out=$(docker info 2>&1); then
-      cv=$(docker compose version --short 2>&1 || true)
-      case "$cv" in
-        v2*|2*)
-          RUNTIME_BIN=docker
-          COMPOSE=(docker compose)
-          log "运行时：Docker（Compose $cv）"
-          return 0
-          ;;
-        *)
-          docker_reason="Docker 可用但未检出 Compose v2（当前：${cv:-未检出}）"
-          ;;
-      esac
+      # docker compose 子命令仅由 Compose v2+ 插件提供（v1 为独立 docker-compose
+      # 二进制，从不是子命令）——子命令 version 成功即 v2 家族。勿匹配版本号
+      # 前缀：Compose v5（io-deployment 实测 5.1.1）会被旧 v2*|2* 模式误拒。
+      if cv=$(docker compose version --short 2>&1); then
+        RUNTIME_BIN=docker
+        COMPOSE=(docker compose)
+        log "运行时：Docker（Compose $cv）"
+        return 0
+      else
+        docker_reason="Docker 可用但未检出 Compose v2+ 插件（docker compose 子命令不可用）"
+      fi
     elif printf '%s' "$out" | grep -qi 'permission denied'; then
       docker_reason="Docker 守护进程连接被拒（permission denied，用户可能不在 docker 组）"
     else
