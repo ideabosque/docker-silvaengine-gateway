@@ -109,7 +109,7 @@ bash deploy.sh --dry-run      # 环境检测/源码获取/配置/端口预检/�
 bash deploy.sh --restart     # 部署后重启 gateway（改种子 JSON 后使用）
 bash deploy.sh --force-build  # 强制重建镜像（默认源码未变自动跳过）
 bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变更）
-bash deploy.sh --self-test    # 内置纯逻辑自检（100 项，不碰 docker/podman）
+bash deploy.sh --self-test    # 内置纯逻辑自检（102 项，不碰 docker/podman）
 ```
 
 ### 十二个阶段
@@ -136,6 +136,7 @@ bash deploy.sh --self-test    # 内置纯逻辑自检（100 项，不碰 docker/
 | `TENANT_PART_ID` | 首次生成 .env | `nestaging` | 租户 part_id |
 | `GATEWAY_PORT` | 首次生成 .env | `8080` | 网关宿主端口（容器内恒 8000；legacy .env 缺键自动补写） |
 | `POSTGRES_PORT` / `REDIS_PORT` / `NEO4J_HTTP_PORT` / `NEO4J_BOLT_PORT` | 首次生成 .env | `5432` / `6379` / `7474` / `7687` | 数据面宿主端口（容器侧端口恒不变；宿主 5432/6379 等被保留服务占用时经这些键换道；legacy .env 缺键自动补写） |
+| `NEO4J_AUTH` | 首次生成 .env | 随机 16 位 | neo4j 认证（格式 `neo4j/<纯字母数字>`；预置数据卷迁移场景导出固定旧凭据一次到位，如 `neo4j/12345abc`；缺省随机生成） |
 | `GATEWAY_BRANCH` / `ENGINE_BRANCH` / `SILVAENGINE_*_BRANCH` | 阶段 2 clone | 网关仓 feature 分支；引擎 main；base/connections main；utility banyan | 各仓组 clone 分支覆盖 |
 | `GITHUB_URL_BASE` | 阶段 2 | `https://github.com` | **https 仓** clone 基址（镜像加速）；引擎 SSH 仓不受影响 |
 | `GIT_SSH_COMMAND` | 阶段 2 | `ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes` | 引擎 SSH 仓所用 ssh 命令；已设时尊重不覆盖（`~/.ssh/config` 依然生效） |

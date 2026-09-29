@@ -57,6 +57,8 @@
 #                          （数据面宿主端口，默认 5432/6379/7474/7687；容器侧端口
 #                          恒不变；写入 .env——宿主 5432/6379 等被保留服务占用时
 #                          经这些键换道，io-deployment 服务器实测案例）
+#   NEO4J_AUTH（仅首次生成 .env 时生效：预置数据卷迁移场景固定旧凭据，格式
+#                          neo4j/<纯字母数字>；缺省随机生成 16 位）
 #   GATEWAY_BRANCH / ENGINE_BRANCH / SILVAENGINE_BASE_BRANCH /
 #   SILVAENGINE_UTILITY_BRANCH（默认 banyan）/ SILVAENGINE_CONNECTIONS_BRANCH
 #   （阶段 2 clone 分支。默认：网关仓 feature/integrate-with-silvaengine-daemon、
@@ -266,6 +268,9 @@ SilvaEngine Gateway — Banyan 一键部署（生产镜像模式：源码打进�
                               数据面宿主端口（默认 5432/6379/7474/7687，容器侧
                               端口恒不变；写入 .env——宿主 5432/6379 等被保留
                               服务占用时经这些键换道避让）
+  NEO4J_AUTH                  neo4j 认证（仅首次生成 .env 时生效；格式
+                              neo4j/<纯字母数字>；预置数据卷迁移场景固定旧凭据，
+                              缺省随机生成）
   GATEWAY_BRANCH              网关仓分支（默认 feature/integrate-with-silvaengine-daemon）
   ENGINE_BRANCH               12 引擎仓分支（默认 main）
   SILVAENGINE_BASE_BRANCH     框架仓 silvaengine_base 分支（默认 main）
@@ -641,11 +646,31 @@ assert_alnum() {
 
 # 首次部署：生成随机密码 + 数据面镜像默认值 → .env（不含源码路径，路径仅构建期使用）
 generate_env() {
-  local part_id pg_pw neo4j_pw redis_pw tmp_f
+  local part_id pg_pw neo4j_pw redis_pw tmp_f neo4j_auth
   part_id="${TENANT_PART_ID:-nestaging}"
   pg_pw=$(rand_alnum 16)
   neo4j_pw=$(rand_alnum 16)
   redis_pw=$(rand_alnum 16)
+  # NEO4J_AUTH 环境变量覆盖（仅首次生成 .env 时生效）：预置数据卷迁移场景
+  # 固定旧凭据——旧 system db 认证优先于镜像 NEO4J_AUTH env，新栈侧 .env
+  # 与种子 JSON 须与旧数据一致，故一次到位写入。格式 fail-closed 校验：
+  # 前缀 neo4j/ + 密码纯字母数字（种子 JSON sed 渲染约束）。
+  neo4j_auth="neo4j/${neo4j_pw}"
+  if [ -n "${NEO4J_AUTH:-}" ]; then
+    case "$NEO4J_AUTH" in
+      neo4j/*)
+        case "${NEO4J_AUTH#neo4j/}" in
+          ""|*[!A-Za-z0-9]*)
+            die "NEO4J_AUTH 环境变量格式须为 neo4j/<纯字母数字密码>（当前：$NEO4J_AUTH）"
+            ;;
+        esac
+        neo4j_auth="$NEO4J_AUTH"
+        ;;
+      *)
+        die "NEO4J_AUTH 环境变量格式须为 neo4j/<纯字母数字密码>（当前：$NEO4J_AUTH）"
+        ;;
+    esac
+  fi
 
   tmp_f="$ENV_FILE.tmp.$$"
   cat > "$tmp_f" <<EOF
@@ -677,7 +702,7 @@ DDB_LOCAL_IMAGE=${DDB_LOCAL_IMAGE:-docker.m.daocloud.io/amazon/dynamodb-local:la
 POSTGRES_USER=banyan
 POSTGRES_PASSWORD=${pg_pw}
 POSTGRES_DB=banyan
-NEO4J_AUTH=neo4j/${neo4j_pw}
+NEO4J_AUTH=${neo4j_auth}
 REDIS_PASSWORD=${redis_pw}
 
 # --- 超级管理员（阶段 11 admin-init 使用；默认密码建议部署后立即修改）---
@@ -1440,6 +1465,19 @@ cmd_self_test() {
     "$(printf '%s' "$pw_check" | grep -c '^[A-Za-z0-9]*$' || true)" "1"
   expect_eq "NEO4J_AUTH 形态 neo4j/<16>" \
     "$(env_get NEO4J_AUTH | grep -c '^neo4j/[A-Za-z0-9]\{16\}$' || true)" "1"
+  # --- NEO4J_AUTH 环境变量覆盖（仅首次生成 .env；预置卷迁移固定旧凭据）---
+  if [ -z "${NEO4J_AUTH:-}" ]; then
+    export NEO4J_AUTH="neo4j/12345abc"
+    generate_env
+    expect_eq "NEO4J_AUTH 导出时覆盖写入 .env" \
+      "$(env_get NEO4J_AUTH)" "neo4j/12345abc"
+    unset NEO4J_AUTH
+    generate_env
+    expect_eq "NEO4J_AUTH 取消后回到随机 16 位" \
+      "$(env_get NEO4J_AUTH | grep -c '^neo4j/[A-Za-z0-9]\{16\}$' || true)" "1"
+  else
+    printf '  （跳过 NEO4J_AUTH 覆盖测试：宿主已导出 NEO4J_AUTH）\n'
+  fi
   expect_eq "AWS 假凭据已写入" "$(env_get aws_access_key_id)" "local"
   expect_eq "POSTGRES_IMAGE 默认 China 源" \
     "$(env_get POSTGRES_IMAGE)" "${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16}"
