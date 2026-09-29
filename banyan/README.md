@@ -155,10 +155,11 @@ bash deploy.sh status                             # 五容器 healthy + 两条�
 # GraphQL 负向探针（无令牌应 401/403，证明路径规范化+鉴权桥生效）：
 curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -d '{"query": "{ __typename }"}'
-# 超级管理员登录闭环（阶段 11 已建超管 + platform:super_admin 绑定）：
+# 超级管理员登录闭环（阶段 11 已建超管 + platform:super_admin 绑定；LoginInput
+# 以 email 字段承载账号 + 幂等键，与 resource-init 同一契约，io-deployment 实测）：
 curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: <TENANT_PART_ID>' \
-  -d '{"query": "mutation { login(input: {account: \"<ADMIN_ACCOUNT>\", password: \"<ADMIN_PASSWORD>\"}) { authToken ... } }"}'
+  -d '{"query": "mutation($k: ID!, $input: LoginInput!){ login(idempotencyKey: $k, input: $input){ authToken user { id } } }", "variables": {"k": "<任意幂等键>", "input": {"email": "<ADMIN_ACCOUNT>", "password": "<ADMIN_PASSWORD>"}}}'
 # 其余业务 mutation 骨架（携带 part_id 头 + Banyan JWT）：
 curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: <TENANT_PART_ID>' \

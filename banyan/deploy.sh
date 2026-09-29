@@ -1266,10 +1266,10 @@ print_summary() {
 验证步骤：
   curl -sS http://127.0.0.1:${GATEWAY_PORT}/health
   bash deploy.sh status
-  # 登录 mutation 骨架（携带 part_id 头 + Banyan JWT）：
+  # 登录 mutation 骨架（LoginInput 以 email 字段承载账号 + 幂等键，与 resource-init 同一契约）：
   # curl -sS -X POST http://127.0.0.1:${GATEWAY_PORT}/beta/core/banyan/user_engine_graphql \\
   #   -H 'content-type: application/json' -H 'part_id: ${TENANT_PART_ID}' \\
-  #   -d '{"query": "mutation { ... }"}'
+  #   -d '{"query": "mutation(\$k: ID!, \$input: LoginInput!){ login(idempotencyKey: \$k, input: \$input){ authToken user { id } } }", "variables": {"k": "<任意幂等键>", "input": {"email": "<ADMIN_ACCOUNT>", "password": "<ADMIN_PASSWORD>"}}}'
 
 常用操作：
   bash deploy.sh status          # 状态/健康/关键日志
