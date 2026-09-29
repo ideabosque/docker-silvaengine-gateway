@@ -202,3 +202,14 @@ sticky sessions for SSE. See the upstream gateway docs for details.
 ## 📝 License
 
 MIT.
+
+---
+
+## 🌳 Banyan 数据面部署（banyan/）
+
+本仓 `banyan/` 子目录是 **Banyan 系统（12 引擎）生产数据面的一键部署交付物**：
+源码打进镜像（无 SSH key、无 bind-mount），目标服务器只需预装 Docker +
+Compose v2，`bash banyan/deploy.sh` 一条命令完成构建（源码未变自动跳过）+
+DynamoDB Local 建表灌种子 + 五服务编排 + 健康验证；支持幂等重跑与
+`down [-v]` 回滚，本机可用 Podman + docker-compose v2 测试。
+详见 [banyan/README.md](banyan/README.md)。

@@ -1,0 +1,10 @@
+# 自动生成配置（含密码/JWT，勿提交）
+.env
+env/*.local.json
+
+# 构建上下文（deploy.sh 每次全量重建）
+.build-context/
+
+# 静态检查缓存（本地 ruff/mypy 双检）
+.mypy_cache/
+.ruff_cache/

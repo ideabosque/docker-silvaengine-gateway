@@ -1,0 +1,98 @@
+{
+  "_comment": "PLACEHOLDER TEMPLATE ONLY — no real secrets. Mirrors the shape of the staging se-configdata record (setting_id=beta_core_banyan, one row per variable). The authoritative variable set is the staging record itself: verify with banyan scripts/probe_seconfig.py before filling this in, and never commit a filled copy.",
+  "region_name": "us-west-2",
+  "part_id": "<TENANT_PART_ID>",
+  "endpoint_id": "banyan",
+  "db_backend": "postgresql",
+  "initialize_tables": true,
+  "jwt_secret": "<REPLACE_WITH_BANYAN_JWT_SECRET>",
+  "jwt_config": {
+    "algorithm": "HS256",
+    "issuer": "banyan",
+    "audience": "banyan-graphql"
+  },
+  "neo4j": {
+    "uri": "bolt://neo4j:7687",
+    "user": "neo4j",
+    "password": "<NEO4J_PASSWORD>"
+  },
+  "email_code_redis": {
+    "host": "redis",
+    "port": 6379,
+    "password": "<REDIS_PASSWORD>"
+  },
+  "plugins": [
+    {
+      "config": {
+        "postgres_main": {
+          "settings": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "<POSTGRES_DB>",
+            "username": "<POSTGRES_USER>",
+            "password": "<POSTGRES_PASSWORD>"
+          }
+        },
+        "postgres_audit": {
+          "settings": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "<POSTGRES_DB>",
+            "username": "<POSTGRES_USER>",
+            "password": "<POSTGRES_PASSWORD>"
+          }
+        },
+        "postgres_telemetry": {
+          "settings": {
+            "host": "postgres",
+            "port": 5432,
+            "database": "<POSTGRES_DB>",
+            "username": "<POSTGRES_USER>",
+            "password": "<POSTGRES_PASSWORD>"
+          }
+        },
+        "httpx_agent": {
+          "settings": {
+            "base_url": "https://gateway.example.com/beta/core/banyan",
+            "timeout": 60,
+            "headers": {
+              "Content-Type": "application/json",
+              "x-api-key": "<ENV_API_KEY>"
+            }
+          }
+        },
+        "httpx_capability": {
+          "settings": {
+            "base_url": "https://gateway.example.com/beta/core/banyan",
+            "timeout": 15,
+            "headers": {
+              "Content-Type": "application/json",
+              "x-api-key": "<ENV_API_KEY>"
+            }
+          }
+        },
+        "httpx_llm_engine": {
+          "settings": {
+            "base_url": "https://gateway.example.com/beta/core/banyan",
+            "timeout": 300,
+            "headers": {
+              "Content-Type": "application/json",
+              "x-api-key": "<ENV_API_KEY>"
+            }
+          }
+        },
+        "httpx_prompt": {
+          "settings": {
+            "base_url": "https://gateway.example.com/beta/core/banyan",
+            "timeout": 60,
+            "headers": {
+              "Content-Type": "application/json",
+              "x-api-key": "<ENV_API_KEY>"
+            }
+          }
+        }
+      }
+    }
+  ],
+  "plugin_settings": {}
+}

@@ -1,0 +1,246 @@
+# =============================================================================
+# SilvaEngine Gateway — Banyan 生产数据面（镜像模式）
+#
+# 一键入口（本文件由 deploy.sh 驱动，不建议手工 compose up —— 缺少构建/
+# 灌种子/验证环节）：
+#   bash deploy.sh            # 构建（源码未变自动跳过）+ 配置 + 全栈启动 + 验证
+#   bash deploy.sh status     # 状态/健康/关键日志
+#   bash deploy.sh down [-v]  # 停止（-v 连数据卷）
+#
+# 架构：浏览器/前端 → gateway（FastAPI 单容器，12 引擎进程内分发）→
+#   postgres / neo4j / redis；se-configdata 读 DDB Local（模式 A 全离线，
+#   ddb-init 幂等建表灌种子并核验）；跨引擎互调走 BANYAN_LOOPBACK_BASE_URL
+#   回环（服务令牌经鉴权桥验证，与前端同一路径）。
+#
+# 与网关仓 deploy/docker-compose.yml（bind-mount 变体）的关系：本文件是
+# 生产镜像形态 —— gateway 无挂载、依赖已打进镜像；数据面服务块与 P0 逐字
+# 一致（端口/健康检查/内存上限/卷名不变），两个形态共用同一验收清单。
+# =============================================================================
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gateway:
+    # deploy.sh 构建的 Banyan 生产镜像（见 Dockerfile）；:? 守卫防手写 .env 漏配
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    container_name: silvaengine-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./.env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # Banyan 托管开关（网关内置 Banyan 托管）：
+      #   SETTING_SOURCE=se-configdata → setting 启动时叠加 DDB 记录（DDB 键优先）
+      #   ENDPOINT_ID=banyan           → 挂载路径规范化 + PermAuthorizer 鉴权桥
+      - SETTING_SOURCE=se-configdata
+      - ENDPOINT_ID=${ENDPOINT_ID:-banyan}
+      - ADAPTER_STAGE=${ADAPTER_STAGE:-beta}
+      - ADAPTER_AREA=${ADAPTER_AREA:-core}
+      # 跨引擎 httpx 池回环：容器内引擎互调绕开云端 API-GW，走本网关
+      - BANYAN_LOOPBACK_BASE_URL=${BANYAN_LOOPBACK_BASE_URL:-http://127.0.0.1:8000/beta/core/banyan}
+      - SE_CONFIGDATA_TABLE=${SE_CONFIGDATA_TABLE:-se-configdata}
+      # 模式 A：读 DDB Local（deploy.sh 生成的 .env 固定指向容器内 ddb-local）
+      - SE_CONFIGDATA_ENDPOINT_URL=${SE_CONFIGDATA_ENDPOINT_URL:-}
+      # se-* 配置表 TTL 缓存（0 禁用；紧急回退 SILVAENGINE_CACHE_ENABLED=false 直查）
+      - SILVAENGINE_CACHE_TTL=${SILVAENGINE_CACHE_TTL:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    # 在途 GraphQL 请求可达数十秒；重启/拉取时给足排空宽限
+    stop_grace_period: 30s
+    healthcheck:
+      # 镜像内无 curl/wget，用 venv python 探活（与 P0 base 一致）
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5); sys.exit(0 if r.status==200 else 1)",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      # 依赖已打进镜像，启动即秒级就绪；90s 已含 DDB setting 加载余量
+      start_period: 90s
+    logging: *default-logging
+
+  postgres:
+    # 关系型/日志型数据统一存储（12 引擎共用；审计/遥测池同实例分库或同库）
+    image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16}
+    container_name: silvaengine-gateway-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:?set POSTGRES_USER in .env}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:?set POSTGRES_DB in .env}
+    volumes:
+      - gateway-pg-data:/var/lib/postgresql
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -q"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging: *default-logging
+
+  neo4j:
+    # 图数据与向量数据唯一存储（知识图谱实体/关系、记忆关联边、embedding 向量）
+    image: ${NEO4J_IMAGE:-docker.m.daocloud.io/library/neo4j:5.26-ubi10}
+    container_name: silvaengine-gateway-neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=${NEO4J_AUTH:?set NEO4J_AUTH in .env}
+      - NEO4J_server_memory_heap_initial__size=512m
+      - NEO4J_server_memory_heap_max__size=1G
+      # 显式 pagecache 上限（默认可达宿主 RAM 50%，小内存机器有 OOM 隐患）
+      - NEO4J_server_memory_pagecache_size=256m
+    volumes:
+      - gateway-neo4j-data:/data
+      - gateway-neo4j-logs:/logs
+    restart: unless-stopped
+    stop_grace_period: 30s
+    healthcheck:
+      # 镜像内无 wget/curl；bash /dev/tcp 探测 bolt 端口（api-runtime 已验证可行）
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/7687'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    logging: *default-logging
+
+  redis:
+    # 短时令牌/验证码/MFA 会话等瞬态数据；AOF 持久化
+    image: ${REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7}
+    container_name: silvaengine-gateway-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env} --appendonly yes
+    environment:
+      # redis-cli 原生读取 REDISCLI_AUTH —— healthcheck 免密 ping
+      - REDISCLI_AUTH=${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    volumes:
+      - gateway-redis-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
+  ddb-local:
+    # DynamoDB Local（模式 A 全离线）：宿主机 8001 仅绑 127.0.0.1（本地调试/
+    # 手动灌表用，公网不可见）。不设 healthcheck —— 不对镜像内 bash 做假设，
+    # ddb_init.py 的端点重试自会兜底。
+    image: ${DDB_LOCAL_IMAGE:-docker.m.daocloud.io/amazon/dynamodb-local:latest}
+    container_name: silvaengine-gateway-ddb-local
+    ports:
+      - "127.0.0.1:8001:8000"
+    command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
+    restart: unless-stopped
+    logging: *default-logging
+
+  ddb-init:
+    # 一次性初始化：等端点 → 幂等建表 → 灌种子（覆盖写）→ 行数核验。
+    # 直接用网关镜像跑（venv 自带 boto3）—— 与 bind-mount 变体的
+    # bash -c "pip install boto3 && ..." 相比，消除部署期 pip 网络依赖。
+    # deploy.sh 以 `compose run --rm` 驱动；up 服务清单不含本服务。
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    volumes:
+      - ./scripts:/ddb:ro
+      - ./env:/ddbenv:ro
+    depends_on:
+      - ddb-local
+    restart: "no"
+    command:
+      - python
+      - /ddb/ddb_init.py
+      - --file
+      - /ddbenv/se-configdata.local.json
+      - --table
+      - ${SE_CONFIGDATA_TABLE:-se-configdata}
+      # setting_id 与网关 _setting_id() 同源：{stage}_{area}_{endpoint_id}
+      - --setting-id
+      - ${ADAPTER_STAGE:-beta}_${ADAPTER_AREA:-core}_${ENDPOINT_ID:-banyan}
+      - --endpoint-url
+      - http://ddb-local:8000
+    logging: *default-logging
+
+  admin-init:
+    # 一次性超管引导（阶段 10）：等 PG → 等预设角色（网关冷启动建）→
+    # 幂等收敛超管用户 + platform:super_admin 绑定（密码永不覆盖）→ 核验。
+    # 复用网关镜像（venv 自带 sqlalchemy/psycopg/argon2-cffi），凭据经
+    # env_file ./.env（ADMIN_ACCOUNT/ADMIN_PASSWORD + POSTGRES_*）注入；
+    # deploy.sh 以 `compose run --rm` 驱动；up 服务清单不含本服务。
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    volumes:
+      - ./scripts:/ddb:ro
+    env_file:
+      - ./.env
+    restart: "no"
+    command:
+      - python
+      - /ddb/admin_init.py
+    logging: *default-logging
+
+  resource-init:
+    # 一次性资源注册与根角色授权收敛（阶段 11）：等网关 /health → 超管
+    # login（匿名白名单 Mutation）→ registerResources（平台级 Mutation，
+    # 与前端「资源注册」按钮同一正向通道，含审计行；一次调用同时完成
+    # 资源差量入库 + 预设角色全量 PERMIT 授权）→ DB 反连接终态核验。
+    # 超管改密后重部署：登录失败但 DB 终态已收敛 → WARN 放行（不阻塞
+    # 幂等重跑）。复用网关镜像（stdlib urllib，零额外依赖）；凭据经
+    # env_file ./.env 注入；deploy.sh 以 `compose run --rm` 驱动；
+    # up 服务清单不含本服务。
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gateway:
+        condition: service_healthy
+    image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
+    volumes:
+      - ./scripts:/ddb:ro
+    env_file:
+      - ./.env
+    environment:
+      - ADAPTER_STAGE=${ADAPTER_STAGE:-beta}
+      - ADAPTER_AREA=${ADAPTER_AREA:-core}
+      - ENDPOINT_ID=${ENDPOINT_ID:-banyan}
+      - TENANT_PART_ID=${TENANT_PART_ID:-nestaging}
+      - RESOURCE_INIT_BASE_URL=${RESOURCE_INIT_BASE_URL:-http://gateway:8000}
+    restart: "no"
+    command:
+      - python
+      - /ddb/resource_init.py
+    logging: *default-logging
+
+volumes:
+  gateway-pg-data:
+    name: silvaengine-gateway_pg-data
+  gateway-neo4j-data:
+    name: silvaengine-gateway_neo4j-data
+  gateway-neo4j-logs:
+    name: silvaengine-gateway_neo4j-logs
+  gateway-redis-data:
+    name: silvaengine-gateway_redis-data
