@@ -112,6 +112,33 @@ bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变�
 bash deploy.sh --self-test    # 内置纯逻辑自检（103 项，不碰 docker/podman）
 ```
 
+### 日常更新（update.sh · 代码迭代）
+
+```bash
+bash update.sh             # 交付仓自身 pull + 16 仓模块 clone/pull + 按需重建镜像/gateway 容器
+bash update.sh --restart   # 同上，并强制重启 gateway（改种子 JSON 后使用）
+bash update.sh --dry-run   # 拉代码 + 暂存 + digest，不构建不起容器（安全演练）
+bash update.sh --self-test # 内置纯逻辑自检（39 项临时目录夹具，不碰 docker/podman）
+```
+
+- **定位**：仅用于既有部署（存在 `.env`）的日常代码更新，单命令完成
+  「模块源码 clone/pull → 按需重建镜像 → 自动重启相关容器 → 幂等收敛」；
+  首次部署请运行 `bash deploy.sh`（update.sh 检测无 `.env` 时拒绝执行）。
+- **编排**（U1/2/3，重活委托 deploy.sh 权威流水线，零逻辑重复）：U1 前置
+  检查 → U2 交付仓（`docker-silvaengine-gateway`——deploy.sh 阶段 2 的
+  16 仓清单不含交付仓自身）`fetch + ff`（脏仓 fail-closed；
+  `--skip-self-pull` 跳过；`DELIVERY_BRANCH` 指定分支）→ U3 委托
+  `bash deploy.sh up` 全流水线。
+- **「自动重启相关容器」语义**（生产镜像模式：源码打进镜像，非宿主挂载）：
+  代码变更 → 镜像重建（digest 未变自动跳过）→ gateway 容器由 `up -d`
+  自动重建（相关容器）；数据面容器（postgres / neo4j / redis /
+  ddb-local）与代码更新无关、不受扰动；源码未变时容器保持原样（避免
+  无意义重启，`--restart` 可强制）。「只 restart 不重建镜像」不会让容器
+  内源码变新——本脚本不走该捷径。
+- 超管与平台资源授权经阶段 11/12 幂等差量收敛（引擎新增资源自动注册授权）；
+  本地开发工作区运行时请配合 `--skip-self-pull` + 五个 `*_DIR` 覆盖
+  （见上文开发机注意事项）。
+
 ### 十二个阶段
 
 | 阶段 | 内容 | 失败时排查建议（脚本会打印） |
