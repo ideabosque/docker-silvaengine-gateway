@@ -109,7 +109,7 @@ bash deploy.sh --dry-run      # 环境检测/源码获取/配置/端口预检/�
 bash deploy.sh --restart     # 部署后重启 gateway（改种子 JSON 后使用）
 bash deploy.sh --force-build  # 强制重建镜像（默认源码未变自动跳过）
 bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变更）
-bash deploy.sh --self-test    # 内置纯逻辑自检（86 项，不碰 docker/podman）
+bash deploy.sh --self-test    # 内置纯逻辑自检（100 项，不碰 docker/podman）
 ```
 
 ### 十二个阶段
@@ -119,7 +119,7 @@ bash deploy.sh --self-test    # 内置纯逻辑自检（86 项，不碰 docker/p
 | 1 | 环境检测（Docker/Compose v2 或 Podman/provider；git 宿主优先，容器兑底仅限 https 仓） | 安装指引 / usermod / podman machine start |
 | 2 | 源码获取：clone/pull 16 仓（ideabosque 4 仓 https，引擎 12 仓 SSH 私有仓；vendor 内置勿 clone；`*_DIR` 覆盖组自管跳过） | 引擎仓 SSH 失败：`ssh -T git@github.com` 验证 key 与 banyanos 访问权（passphrase 先 ssh-add；port 22 被墙经 `~/.ssh/config` 切 443）；https 仓可 `GITHUB_URL_BASE` 镜像基址；脏工作区 fail-closed |
 | 3 | 配置四态状态机 + 源码树校验 | 缺失项一次列全；路径可用环境变量覆盖 |
-| 4 | 端口预检 `${GATEWAY_PORT}`/8001/5432/6379/7474/7687 + 同名前缀异项目容器互斥 | 区分本栈容器/他项目容器/宿主机进程 |
+| 4 | 端口预检 `${GATEWAY_PORT}`/8001/数据面四端口（PG/Redis/Neo4j http+bolt 宿主端口可配）+ 同名前缀异项目容器互斥 | 区分本栈容器/他项目容器/宿主机进程 |
 | 5 | 暂存 .build-context/ + 计算源码 digest | tar 排除模式不兼容会显式失败 |
 | 6 | 构建镜像（digest 与镜像 label 相同则跳过） | 换源指引（PYTHON_IMAGE / PIP_INDEX_URL） |
 | 7 | 启动 DynamoDB Local | DDB_LOCAL_IMAGE 可换源 |
@@ -135,6 +135,7 @@ bash deploy.sh --self-test    # 内置纯逻辑自检（86 项，不碰 docker/p
 |---|---|---|---|
 | `TENANT_PART_ID` | 首次生成 .env | `nestaging` | 租户 part_id |
 | `GATEWAY_PORT` | 首次生成 .env | `8080` | 网关宿主端口（容器内恒 8000；legacy .env 缺键自动补写） |
+| `POSTGRES_PORT` / `REDIS_PORT` / `NEO4J_HTTP_PORT` / `NEO4J_BOLT_PORT` | 首次生成 .env | `5432` / `6379` / `7474` / `7687` | 数据面宿主端口（容器侧端口恒不变；宿主 5432/6379 等被保留服务占用时经这些键换道；legacy .env 缺键自动补写） |
 | `GATEWAY_BRANCH` / `ENGINE_BRANCH` / `SILVAENGINE_*_BRANCH` | 阶段 2 clone | 网关仓 feature 分支；引擎 main；base/connections main；utility banyan | 各仓组 clone 分支覆盖 |
 | `GITHUB_URL_BASE` | 阶段 2 | `https://github.com` | **https 仓** clone 基址（镜像加速）；引擎 SSH 仓不受影响 |
 | `GIT_SSH_COMMAND` | 阶段 2 | `ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes` | 引擎 SSH 仓所用 ssh 命令；已设时尊重不覆盖（`~/.ssh/config` 依然生效） |
@@ -227,7 +228,8 @@ Banyan 系统 API 接口契约文档（端点、认证、12 引擎 644 个操作
   种子；仅 JSON（孤儿态）→报错退出（防密码错位）。
 - **阶段 2 幂等**：目录缺失→clone；已有 git 仓→`fetch + ff`（脏仓 fail-closed
   拒绝动，防覆盖手工修改）；已有非 git 目录→按手工/rsync 布局跳过；`*_DIR`
-  覆盖组自管跳过；legacy .env 缺 `GATEWAY_PORT`/超管键自动补写不覆盖。
+  覆盖组自管跳过；legacy .env 缺 `GATEWAY_PORT`/数据面端口键/超管键
+  自动补写不覆盖。
   引擎仓走 SSH（私有，`GIT_SSH_COMMAND` 非交互化，容器兑底模式遇 SSH 仓
   fail-closed）；ideabosque 仓走 https（公开，可镜像）。
 - **digest 跳过构建**：暂存树（文件清单排序 + 内容双重哈希）写入镜像 label
@@ -270,6 +272,10 @@ rm -rf .build-context      # 可选：删除暂存目录（下次部署自动重
   （见前置条件）或设 `BANYAN_MODULES_DIR` 指向已有源码目录。
 - 网关宿主端口默认 8080（`.env` 的 `GATEWAY_PORT` 可配）；容器内监听恒 8000
   （healthcheck / 跨引擎回环 / resource-init 均走容器内地址，不受宿主端口影响）。
+- 数据面宿主端口默认 5432/6379/7474/7687（`.env` 的 `POSTGRES_PORT` /
+  `REDIS_PORT` / `NEO4J_HTTP_PORT` / `NEO4J_BOLT_PORT` 可配）；容器侧端口恒
+  不变——引擎连接、admin-init、resource-init 均走容器网络服务名（`postgres` /
+  `neo4j` / `redis`），不受宿主端口影响；宿主端口仅供本机调试。
 - 模式 A（DDB Local 全离线）专用；读真实云端 DynamoDB 的模式 B 走网关仓
   `deploy/README.md` 手动路径。
 - 种子 JSON 渲染要求配置值纯字母数字（sed 注入面收敛）；复杂密码请改用

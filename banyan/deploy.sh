@@ -23,8 +23,9 @@
 #                          *_DIR 覆盖组自管跳过
 #   阶段 3  配置与源码校验  .env 与种子 JSON 生成/复用（四态状态机）+
 #                          网关包 / 12 引擎 / vendor / 三框架源码树校验
-#   阶段 4  端口预检        GATEWAY_PORT/8001/5432/6379/7474/7687（区分占用者
-#                          与 compose 项目）+ 同名前缀异项目容器互斥检查
+#   阶段 4  端口预检        GATEWAY_PORT/8001/数据面四端口（PG/Redis/Neo4j http/bolt，
+#                          宿主端口均可配；区分占用者与 compose 项目）+
+#                          同名前缀异项目容器互斥检查
 #   阶段 5  暂存构建上下文  tar 排除 .git/.venv/__pycache__ 等 → .build-context/
 #                          （框架双布局归一化为包目录形态）→ 计算源码 digest
 #   阶段 6  镜像构建        digest 与既有镜像 label 相同则跳过（--force-build 覆盖）
@@ -52,6 +53,10 @@
 # 环境变量覆盖：
 #   TENANT_PART_ID（默认 nestaging）
 #   GATEWAY_PORT（网关宿主端口，默认 8080；容器内恒 8000；写入 .env）
+#   POSTGRES_PORT / REDIS_PORT / NEO4J_HTTP_PORT / NEO4J_BOLT_PORT
+#                          （数据面宿主端口，默认 5432/6379/7474/7687；容器侧端口
+#                          恒不变；写入 .env——宿主 5432/6379 等被保留服务占用时
+#                          经这些键换道，io-deployment 服务器实测案例）
 #   GATEWAY_BRANCH / ENGINE_BRANCH / SILVAENGINE_BASE_BRANCH /
 #   SILVAENGINE_UTILITY_BRANCH（默认 banyan）/ SILVAENGINE_CONNECTIONS_BRANCH
 #   （阶段 2 clone 分支。默认：网关仓 feature/integrate-with-silvaengine-daemon、
@@ -152,6 +157,24 @@ GATEWAY_PORT_DEFAULT="8080"
 GATEWAY_PORT_STARTUP="${GATEWAY_PORT:-}"
 GATEWAY_PORT="${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
 
+# 数据面宿主端口（容器侧恒 5432/6379/7474/7687）：与 GATEWAY_PORT 同一模式
+# ——启动时捕获进程环境值（legacy .env 缺键时回退），已写入 .env 的值优先
+# 生效。io-deployment（34.208.34.202）实测案例：宿主 5432/6379 被保留服务
+# 占用（宿主原生 PostgreSQL / docker-redis 项目，不可停），新栈经
+# POSTGRES_PORT=15432 REDIS_PORT=16379 换道部署。
+POSTGRES_PORT_DEFAULT="5432"
+REDIS_PORT_DEFAULT="6379"
+NEO4J_HTTP_PORT_DEFAULT="7474"
+NEO4J_BOLT_PORT_DEFAULT="7687"
+POSTGRES_PORT_STARTUP="${POSTGRES_PORT:-}"
+REDIS_PORT_STARTUP="${REDIS_PORT:-}"
+NEO4J_HTTP_PORT_STARTUP="${NEO4J_HTTP_PORT:-}"
+NEO4J_BOLT_PORT_STARTUP="${NEO4J_BOLT_PORT:-}"
+POSTGRES_PORT="${POSTGRES_PORT_STARTUP:-$POSTGRES_PORT_DEFAULT}"
+REDIS_PORT="${REDIS_PORT_STARTUP:-$REDIS_PORT_DEFAULT}"
+NEO4J_HTTP_PORT="${NEO4J_HTTP_PORT_STARTUP:-$NEO4J_HTTP_PORT_DEFAULT}"
+NEO4J_BOLT_PORT="${NEO4J_BOLT_PORT_STARTUP:-$NEO4J_BOLT_PORT_DEFAULT}"
+
 # 阶段 2 clone 分支（可经环境变量覆盖）
 GATEWAY_BRANCH="${GATEWAY_BRANCH:-feature/integrate-with-silvaengine-daemon}"
 ENGINE_BRANCH="${ENGINE_BRANCH:-main}"
@@ -162,9 +185,9 @@ GITHUB_URL_BASE="${GITHUB_URL_BASE:-https://github.com}"
 GIT_IMAGE="${GIT_IMAGE:-docker.m.daocloud.io/alpine/git:latest}"
 GIT_MODE=""
 
-# 端口清单初始值（含 GATEWAY_PORT 启动默认）；.env 加载后由
+# 端口清单初始值（含 GATEWAY_PORT / 数据面端口启动默认）；.env 加载后由
 # populate_host_ports 重算——避免 bash 3.2 下空数组展开碰 set -u。
-HOST_PORTS=("${GATEWAY_PORT}" 8001 5432 6379 7474 7687)
+HOST_PORTS=("${GATEWAY_PORT}" 8001 "${POSTGRES_PORT}" "${REDIS_PORT}" "${NEO4J_HTTP_PORT}" "${NEO4J_BOLT_PORT}")
 
 FORCE_ENV=0
 FORCE_BUILD=0
@@ -239,6 +262,10 @@ SilvaEngine Gateway — Banyan 一键部署（生产镜像模式：源码打进�
 环境变量（路径类仅构建期使用；镜像类在首次生成 .env 时写入）:
   TENANT_PART_ID              租户 part_id（默认 nestaging）
   GATEWAY_PORT                网关宿主端口（默认 8080，容器内恒 8000；写入 .env）
+  POSTGRES_PORT / REDIS_PORT / NEO4J_HTTP_PORT / NEO4J_BOLT_PORT
+                              数据面宿主端口（默认 5432/6379/7474/7687，容器侧
+                              端口恒不变；写入 .env——宿主 5432/6379 等被保留
+                              服务占用时经这些键换道避让）
   GATEWAY_BRANCH              网关仓分支（默认 feature/integrate-with-silvaengine-daemon）
   ENGINE_BRANCH               12 引擎仓分支（默认 main）
   SILVAENGINE_BASE_BRANCH     框架仓 silvaengine_base 分支（默认 main）
@@ -561,6 +588,17 @@ MANIFEST
 # 阶段 3：配置生成与校验
 # ---------------------------------------------------------------------------
 
+# 端口键回读辅助：.env 值优先，缺键回退启动环境值（再回退默认）——
+# GATEWAY_PORT 与数据面四端口共用同一代码路径，避免四处复制粘贴。
+load_port_key() {
+  local val
+  val=$(env_get "$1")
+  if [ -z "$val" ]; then
+    val="${2:-$3}"
+  fi
+  printf '%s' "$val"
+}
+
 # 把 .env 相关键读入 shell 变量（构建/渲染/摘要使用）
 load_env_values() {
   TENANT_PART_ID=$(env_get TENANT_PART_ID)
@@ -571,19 +609,20 @@ load_env_values() {
   NEO4J_PASSWORD="${NEO4J_AUTH#neo4j/}"
   REDIS_PASSWORD=$(env_get REDIS_PASSWORD)
   GATEWAY_IMAGE=$(env_get GATEWAY_IMAGE)
-  GATEWAY_PORT=$(env_get GATEWAY_PORT)
-  if [ -z "$GATEWAY_PORT" ]; then
-    # legacy .env 缺键：回退启动环境值（再回退默认）
-    GATEWAY_PORT="${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
-  fi
+  GATEWAY_PORT=$(load_port_key GATEWAY_PORT "${GATEWAY_PORT_STARTUP}" "$GATEWAY_PORT_DEFAULT")
+  POSTGRES_PORT=$(load_port_key POSTGRES_PORT "${POSTGRES_PORT_STARTUP}" "$POSTGRES_PORT_DEFAULT")
+  REDIS_PORT=$(load_port_key REDIS_PORT "${REDIS_PORT_STARTUP}" "$REDIS_PORT_DEFAULT")
+  NEO4J_HTTP_PORT=$(load_port_key NEO4J_HTTP_PORT "${NEO4J_HTTP_PORT_STARTUP}" "$NEO4J_HTTP_PORT_DEFAULT")
+  NEO4J_BOLT_PORT=$(load_port_key NEO4J_BOLT_PORT "${NEO4J_BOLT_PORT_STARTUP}" "$NEO4J_BOLT_PORT_DEFAULT")
   # 导出为权威值：compose 插值优先取 shell 环境，保证端口预检/摘要与
   # 实际发布端口一致（防「用户导出的旧值压过 .env」错位）
-  export GATEWAY_PORT
+  export GATEWAY_PORT POSTGRES_PORT REDIS_PORT NEO4J_HTTP_PORT NEO4J_BOLT_PORT
 }
 
-# 依 GATEWAY_PORT 重算宿主端口清单（load_env_values 之后调用）
+# 依 GATEWAY_PORT 与数据面端口重算宿主端口清单（load_env_values 之后调用）
 populate_host_ports() {
-  HOST_PORTS=("${GATEWAY_PORT}" 8001 5432 6379 7474 7687)
+  # 8001 为 ddb-local 本机调试端口（仅绑 127.0.0.1），保持固定不参数化
+  HOST_PORTS=("${GATEWAY_PORT}" 8001 "${POSTGRES_PORT}" "${REDIS_PORT}" "${NEO4J_HTTP_PORT}" "${NEO4J_BOLT_PORT}")
 }
 
 # 配置值必须纯字母数字：本脚本用 sed 渲染种子 JSON，放宽字符集会引入
@@ -618,6 +657,12 @@ GATEWAY_IMAGE=${GATEWAY_IMAGE_DEFAULT}
 
 # --- 网关宿主端口（容器内恒 8000；compose 端口映射 ${GATEWAY_PORT}:8000）---
 GATEWAY_PORT=${GATEWAY_PORT}
+
+# --- 数据面宿主端口（容器侧恒 5432/6379/7474/7687；宿主侧换道避让占用）---
+POSTGRES_PORT=${POSTGRES_PORT}
+REDIS_PORT=${REDIS_PORT}
+NEO4J_HTTP_PORT=${NEO4J_HTTP_PORT}
+NEO4J_BOLT_PORT=${NEO4J_BOLT_PORT}
 
 # --- 租户 ---
 TENANT_PART_ID=${part_id}
@@ -690,6 +735,29 @@ ensure_gateway_port_env_key() {
       "$GATEWAY_PORT" >> "$ENV_FILE"
     chmod 600 "$ENV_FILE"
     log "已补全 .env 网关端口键（GATEWAY_PORT=$GATEWAY_PORT；已有值不覆盖）"
+  fi
+}
+
+# 数据面端口键补全：legacy .env 缺 POSTGRES_PORT/REDIS_PORT/NEO4J_HTTP_PORT/
+# NEO4J_BOLT_PORT 任一键时追加当前生效值（启动环境值或默认）；已有值不
+# 覆盖。与 ensure_gateway_port_env_key 同一模式——让 compose 插值、端口
+# 预检与 .env 长期自洽（compose 对 legacy .env 自动回退容器侧默认端口，
+# 但补键后配置自可见可审计）。变量名与键同名，经间接展开 ${!k} 取值。
+ensure_data_port_env_keys() {
+  local changed=0 k
+  for k in POSTGRES_PORT REDIS_PORT NEO4J_HTTP_PORT NEO4J_BOLT_PORT; do
+    if [ -z "$(env_get "$k")" ]; then
+      if [ "$changed" = "0" ]; then
+        printf '\n# --- 数据面宿主端口（容器侧恒 5432/6379/7474/7687；宿主侧换道避让占用）---\n' \
+          >> "$ENV_FILE"
+      fi
+      printf '%s=%s\n' "$k" "${!k}" >> "$ENV_FILE"
+      changed=1
+    fi
+  done
+  if [ "$changed" = "1" ]; then
+    chmod 600 "$ENV_FILE"
+    log "已补全 .env 数据面端口键（POSTGRES/REDIS/NEO4J http+bolt；已有值不覆盖）"
   fi
 }
 
@@ -882,6 +950,7 @@ ensure_config() {
   validate_env_keys
   ensure_admin_env_keys
   ensure_gateway_port_env_key
+  ensure_data_port_env_keys
   resolve_source_paths
   validate_source_paths
 }
@@ -903,10 +972,10 @@ check_ports() {
         if [ "$proj" = "$COMPOSE_PROJECT" ]; then
           log "端口 $p 被本栈容器（$holder）占用——重复运行场景，继续"
         else
-          die "端口 $p 被其他容器占用（name=$holder，compose 项目=${proj:-未知}）——请停止该容器或调整端口映射（GATEWAY_PORT 可改）"
+          die "端口 $p 被其他容器占用（name=$holder，compose 项目=${proj:-未知}）——请停止该容器或调整端口映射（GATEWAY_PORT / POSTGRES_PORT / REDIS_PORT / NEO4J_*_PORT 可改）"
         fi
       else
-        die "端口 $p 被宿主机进程占用——排查：lsof -i :$p（macOS）/ ss -ltnp | grep :$p（Linux）；网关端口可经 GATEWAY_PORT 换道"
+        die "端口 $p 被宿主机进程占用——排查：lsof -i :$p（macOS）/ ss -ltnp | grep :$p（Linux）；网关端口可经 GATEWAY_PORT 换道，数据面端口可经 POSTGRES_PORT/REDIS_PORT/NEO4J_*_PORT 换道"
       fi
     fi
   done
@@ -1185,7 +1254,7 @@ print_summary() {
   bash deploy.sh --force-build   # 源码变更后强制重建镜像
   bash deploy.sh --force-env     # 重新生成全部密码
 
-安全提醒：公网防火墙只放行 ${GATEWAY_PORT}；8001/5432/6379/7474/7687 仅供本机调试。
+安全提醒：公网防火墙只放行 ${GATEWAY_PORT}；8001/${POSTGRES_PORT}/${REDIS_PORT}/${NEO4J_HTTP_PORT}/${NEO4J_BOLT_PORT} 仅供本机调试。
 ============================================================
 EOF
 }
@@ -1412,11 +1481,53 @@ cmd_self_test() {
   populate_host_ports
   expect_eq "HOST_PORTS[0] 为 GATEWAY_PORT" "${HOST_PORTS[0]}" "$GATEWAY_PORT"
   expect_eq "HOST_PORTS[1] 为 8001" "${HOST_PORTS[1]}" "8001"
-  expect_eq "HOST_PORTS[2] 为 5432" "${HOST_PORTS[2]}" "5432"
-  expect_eq "HOST_PORTS[3] 为 6379" "${HOST_PORTS[3]}" "6379"
-  expect_eq "HOST_PORTS[4] 为 7474" "${HOST_PORTS[4]}" "7474"
-  expect_eq "HOST_PORTS[5] 为 7687" "${HOST_PORTS[5]}" "7687"
+  expect_eq "HOST_PORTS[2] 为 POSTGRES_PORT" "${HOST_PORTS[2]}" "${POSTGRES_PORT_STARTUP:-$POSTGRES_PORT_DEFAULT}"
+  expect_eq "HOST_PORTS[3] 为 REDIS_PORT" "${HOST_PORTS[3]}" "${REDIS_PORT_STARTUP:-$REDIS_PORT_DEFAULT}"
+  expect_eq "HOST_PORTS[4] 为 NEO4J_HTTP_PORT" "${HOST_PORTS[4]}" "${NEO4J_HTTP_PORT_STARTUP:-$NEO4J_HTTP_PORT_DEFAULT}"
+  expect_eq "HOST_PORTS[5] 为 NEO4J_BOLT_PORT" "${HOST_PORTS[5]}" "${NEO4J_BOLT_PORT_STARTUP:-$NEO4J_BOLT_PORT_DEFAULT}"
   ENV_FILE="$saved_gp_env"
+
+  # --- 数据面端口键（写入 .env / legacy 回退 / 自定义优先 / compose 插值）---
+  expect_eq "generate_env 写入数据面端口 4 键" \
+    "$(grep -c -E '^(POSTGRES_PORT|REDIS_PORT|NEO4J_HTTP_PORT|NEO4J_BOLT_PORT)=' "$ENV_FILE" || true)" "4"
+  local saved_dp_env="$ENV_FILE" saved_pp="$POSTGRES_PORT" saved_rp="$REDIS_PORT" \
+    saved_np="$NEO4J_HTTP_PORT" saved_bp="$NEO4J_BOLT_PORT"
+  ENV_FILE="$tmp/env_no_dp"
+  printf 'GATEWAY_IMAGE=x\n' > "$ENV_FILE"
+  POSTGRES_PORT=""; REDIS_PORT=""; NEO4J_HTTP_PORT=""; NEO4J_BOLT_PORT=""
+  load_env_values
+  expect_eq "legacy .env 缺数据面端口键回退启动值/默认（POSTGRES_PORT）" \
+    "$POSTGRES_PORT" "${POSTGRES_PORT_STARTUP:-$POSTGRES_PORT_DEFAULT}"
+  expect_eq "legacy .env 缺数据面端口键回退启动值/默认（NEO4J_BOLT_PORT）" \
+    "$NEO4J_BOLT_PORT" "${NEO4J_BOLT_PORT_STARTUP:-$NEO4J_BOLT_PORT_DEFAULT}"
+  ensure_data_port_env_keys
+  expect_eq "补键：legacy .env 追加 POSTGRES_PORT" \
+    "$(env_get POSTGRES_PORT)" "${POSTGRES_PORT_STARTUP:-$POSTGRES_PORT_DEFAULT}"
+  expect_eq "补键：追加后 4 键各仅一行" \
+    "$(grep -c -E '^(POSTGRES_PORT|REDIS_PORT|NEO4J_HTTP_PORT|NEO4J_BOLT_PORT)=' "$ENV_FILE" || true)" "4"
+  ENV_FILE="$tmp/env_custom_dp"
+  printf 'POSTGRES_PORT=15432\n' > "$ENV_FILE"
+  POSTGRES_PORT=""; NEO4J_BOLT_PORT=""
+  load_env_values
+  expect_eq ".env 已有 POSTGRES_PORT 优先于环境值" "$POSTGRES_PORT" "15432"
+  ensure_data_port_env_keys
+  expect_eq "补键：已有 POSTGRES_PORT 不追加重复行" \
+    "$(grep -c '^POSTGRES_PORT=' "$ENV_FILE" || true)" "1"
+  expect_eq "补键：缺失 NEO4J_BOLT_PORT 单独追加" \
+    "$(env_get NEO4J_BOLT_PORT)" "${NEO4J_BOLT_PORT_STARTUP:-$NEO4J_BOLT_PORT_DEFAULT}"
+  POSTGRES_PORT="$saved_pp"; REDIS_PORT="$saved_rp"
+  NEO4J_HTTP_PORT="$saved_np"; NEO4J_BOLT_PORT="$saved_bp"
+  ENV_FILE="$saved_dp_env"
+
+  # --- compose 宿主端口插值（docker-compose.yml 参数化断言）---
+  expect_eq "compose postgres 宿主端口插值" \
+    "$(grep -cF '${POSTGRES_PORT:-5432}:5432' "$COMPOSE_FILE" || true)" "1"
+  expect_eq "compose redis 宿主端口插值" \
+    "$(grep -cF '${REDIS_PORT:-6379}:6379' "$COMPOSE_FILE" || true)" "1"
+  expect_eq "compose neo4j http 宿主端口插值" \
+    "$(grep -cF '${NEO4J_HTTP_PORT:-7474}:7474' "$COMPOSE_FILE" || true)" "1"
+  expect_eq "compose neo4j bolt 宿主端口插值" \
+    "$(grep -cF '${NEO4J_BOLT_PORT:-7687}:7687' "$COMPOSE_FILE" || true)" "1"
 
   # --- 超管键（阶段 11 admin-init）---
   expect_eq "ADMIN_ACCOUNT 默认值" "$(env_get ADMIN_ACCOUNT)" "admin@banyanos.dev"
