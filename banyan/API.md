@@ -16,7 +16,7 @@
 ### 1.1 架构与请求链路
 
 ```text
-客户端 → gateway(FastAPI, :8000)
+客户端 → gateway(FastAPI, 宿主 :8080 → 容器内 :8000)
           ├─ BanyanPathNormalizer   剥 /{stage}/{area} 前缀（纯 ASGI）
           ├─ BanyanAuthorizerBridge 真实 PermAuthorizer 鉴权（fail-closed）
           ├─ FlexJWTMiddleware      见桥标记让位（网关自有路由用）
@@ -33,7 +33,8 @@
 
 ### 1.2 基址与路径契约
 
-基址：`http://<host>:8000`（容器端口映射 `8000:8000`）。
+基址：`http://<host>:8080`（默认；compose 端口映射 `${GATEWAY_PORT:-8080}:8000`，
+宿主端口可经 `.env` 的 `GATEWAY_PORT` 修改，容器内恒 8000）。
 
 两种等价路径形态（实测均可访问）：
 
@@ -226,14 +227,14 @@ CORS → PathNormalizer → AuthorizerBridge → FlexJWT → RateLimit → 路�
 
 ## 4. 认证闭环示例（注册 → 激活 → 登录 → 使用）
 
-> ✅ 匿名闭环已随 §3.3 修复解锁，本节示例已可完整走通。部署阶段 10 还会
+> ✅ 匿名闭环已随 §3.3 修复解锁，本节示例已可完整走通。部署阶段 11 还会
 > 引导一个超级管理员（凭据见 .env 的 `ADMIN_ACCOUNT`/`ADMIN_PASSWORD`，
 > README §部署后验证），可直接登录获得 `platform:super_admin` 角色。
 
 ### 4.1 注册（registerUser，匿名）
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
+curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: nestaging' \
   -d '{
     "query": "mutation Register($input: UserRegisterInput!, $idempotencyKey: ID!) { registerUser(input: $input, idempotencyKey: $idempotencyKey) { user { id email username status emailVerified } emailSent message } }",
@@ -261,7 +262,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 ### 4.2 激活（verifyEmailCode，匿名）
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
+curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: nestaging' \
   -d '{
     "query": "mutation Verify($input: VerifyEmailCodeInput!, $idempotencyKey: ID!) { verifyEmailCode(input: $input, idempotencyKey: $idempotencyKey) { success verified message } }",
@@ -281,7 +282,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 ### 4.3 登录（login，匿名）
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
+curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: nestaging' \
   -d '{
     "query": "mutation Login($input: LoginInput!, $idempotencyKey: ID!) { login(input: $input, idempotencyKey: $idempotencyKey) { authToken renewToken expiresIn requiresMfa forceChangePassword user { id email username status } } }",
@@ -304,7 +305,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 ### 4.4 带令牌调用（已实测）
 
 ```bash
-curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
+curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: nestaging' \
   -H "authorization: Bearer ${AUTH_TOKEN}" \
   -d '{"query": "query { me { id email username status } }"}'
@@ -786,7 +787,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 
 ```bash
 # 某操作的精确参数签名（以 registerUser 为例）
-curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
+curl -sS -X POST http://127.0.0.1:8080/beta/core/banyan/user_engine_graphql \
   -H 'content-type: application/json' -H 'part_id: nestaging' \
   -H "authorization: Bearer ${AUTH_TOKEN}" \
   -d '{"query": "{ __schema { mutationType { fields { name args { name type { kind name ofType { kind name ofType { kind name } } } } } } } }"}'
@@ -803,7 +804,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 |---|---|---|
 | 网关存活 | `GET /health` | `200 {"status":"ok","service":"silvaengine-gateway"}`（无鉴权） |
 | 鉴权链生效 | 无令牌 POST 任意引擎端点（非 §3.2 白名单操作） | `401 {"detail":"Authentication required"}` |
-| 匿名白名单 | 无令牌 `login`（超管凭据） | `200 + authToken`（阶段 10 引导的超管） |
+| 匿名白名单 | 无令牌 `login`（超管凭据） | `200 + authToken`（阶段 11 引导的超管） |
 | 数据面健康 | `bash deploy.sh status` | 五容器 healthy + 两条 REQUIRED 日志 |
 | 限流 | 超 100 次/60s | `429 {"detail":"Rate limit exceeded"}` |
 
@@ -835,7 +836,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 | 2 | 无令牌 `POST /beta/core/banyan/user_engine_graphql`（`__typename`） | 401 `{"detail":"Authentication required"}`（鉴权桥 fail-closed） |
 | 3 | 无令牌（网关原生路径 `/banyan/...`） | 401 同上（两种路径形态等价） |
 | 4 | 无令牌 `registerUser`（白名单操作） | **200**（P0 已修复，修复前 401 `Not authenticated`，见 §3.3） |
-| 5 | 无令牌 `login`（阶段 10 超管凭据） | **200 + `authToken`/`renewToken`/`expiresIn`**（登录闭环解锁） |
+| 5 | 无令牌 `login`（阶段 11 超管凭据） | **200 + `authToken`/`renewToken`/`expiresIn`**（登录闭环解锁） |
 | 6 | 带 token `me` 查询 | 200 `{"data":{"me":{..."status":"ACTIVE","roles":["platform:super_admin"]}}}` |
 | 7 | 错误签名令牌 | 401 `{"detail":"Invalid token: Invalid crypto padding"}` |
 | 8 | 错误凭据 `login` | 200 GraphQL 应用级错误 `用户名或密码错误`（`data.login=null`） |
@@ -843,7 +844,7 @@ curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \
 | 10 | GraphQL 校验错误（不存在字段） | 200 `{"errors":[{"message":"Cannot query field ..."}]}` |
 | 11 | 缺 `query` 键 | 200 `{"errors":"GraphQL query 不能为空。"}` |
 
-> 令牌来源说明：探针 6-10 使用阶段 10 引导的超管经真实 `login` 获取的
+> 令牌来源说明：探针 6-10 使用阶段 11 引导的超管经真实 `login` 获取的
 > JWT（此前 PG 无用户，修复前只能以种子 secret 手工签发测试 JWT）；探针 5/6
 > 令牌验证了完整链路：admin-init 建户+角色绑定 → 登录签发 → 鉴权桥验签、
 > 查角色、注入 claims → 引擎 resolver 读取。探针 4 注册的探针用户已从 PG

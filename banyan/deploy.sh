@@ -2,28 +2,39 @@
 # =============================================================================
 # SilvaEngine Gateway — Banyan 一键部署脚本（生产镜像模式 · P1-A）
 # =============================================================================
-# 目标服务器只需预装 Docker（含 Compose v2 插件）；本机开发/测试支持
-# Podman + compose provider（docker-compose v2 二进制或 podman-compose）。
-# 无需 Python / jq / awscli / rsync —— 脚本只依赖 bash + tar + 基本 coreutils。
+# 目标服务器预装 Docker（含 Compose v2 插件）、git 与可访问 banyanos 私有仓
+# 的宿主 SSH key（12 引擎仓为 GitHub 私有仓，阶段 2 走 SSH clone）；本机
+# 开发/测试支持 Podman + compose provider（docker-compose v2 二进制或
+# podman-compose）。无需 Python / jq / awscli / rsync —— 脚本只依赖
+# bash + tar + 基本 coreutils。
 #
 # 本目录（banyan/）自包含：Dockerfile + docker-compose.yml + requirements.txt
 # + env/ 模板 + scripts/ddb_init.py。与网关仓 deploy/（bind-mount 变体）的
 # 手工路径等价，但 gateway 源码打进镜像而非宿主机挂载。
 #
-#   阶段 1  环境检测        Docker+Compose v2 或 Podman+compose provider
-#   阶段 2  配置与源码校验  .env 与种子 JSON 生成/复用（四态状态机）+
+#   阶段 1  环境检测        Docker+Compose v2 或 Podman+compose provider；
+#                          git 探测（宿主优先，缺失时容器 alpine/git 兜底，
+#                          但 SSH 私有仓必须宿主 git——容器无宿主 SSH key）
+#   阶段 2  源码获取        clone/pull 16 仓（网关仓 / 12 引擎仓 / 3 框架仓）
+#                          到工作区（banyan/ 的祖父目录）；ideabosque 4 仓匿名
+#                          HTTPS（GITHUB_URL_BASE 可换镜像），banyanos 12 引擎
+#                          仓为 GitHub 私有仓，走 SSH git@github.com（需宿主
+#                          SSH key）；vendor 三包内置 banyan/vendor/ 勿 clone；
+#                          *_DIR 覆盖组自管跳过
+#   阶段 3  配置与源码校验  .env 与种子 JSON 生成/复用（四态状态机）+
 #                          网关包 / 12 引擎 / vendor / 三框架源码树校验
-#   阶段 3  端口预检        8000/8001/5432/6379/7474/7687（区分占用者与 compose 项目）
-#   阶段 4  暂存构建上下文  tar 排除 .git/.venv/__pycache__ 等 → .build-context/
+#   阶段 4  端口预检        GATEWAY_PORT/8001/5432/6379/7474/7687（区分占用者
+#                          与 compose 项目）+ 同名前缀异项目容器互斥检查
+#   阶段 5  暂存构建上下文  tar 排除 .git/.venv/__pycache__ 等 → .build-context/
 #                          （框架双布局归一化为包目录形态）→ 计算源码 digest
-#   阶段 5  镜像构建        digest 与既有镜像 label 相同则跳过（--force-build 覆盖）
-#   阶段 6  启动 ddb-local  DynamoDB Local（-inMemory -sharedDb）
-#   阶段 7  ddb-init        建表 → 灌种子（覆盖写，幂等）→ 行数核验
-#   阶段 8  启动五服务      ddb-local postgres neo4j redis gateway
-#   阶段 9  健康与日志验证  容器 healthy + /health 探活 + 两条关键启动日志
-#   阶段 10 超管初始化      admin-init 幂等收敛：超管用户 + platform:super_admin
+#   阶段 6  镜像构建        digest 与既有镜像 label 相同则跳过（--force-build 覆盖）
+#   阶段 7  启动 ddb-local  DynamoDB Local（-inMemory -sharedDb）
+#   阶段 8  ddb-init        建表 → 灌种子（覆盖写，幂等）→ 行数核验
+#   阶段 9  启动五服务      ddb-local postgres neo4j redis gateway
+#   阶段 10 健康与日志验证  容器 healthy + /health 探活 + 两条关键启动日志
+#   阶段 11 超管初始化      admin-init 幂等收敛：超管用户 + platform:super_admin
 #                          绑定（密码永不覆盖）+ 终态核验 + 摘要
-#   阶段 11 资源注册与      resource-init：超管 login → registerResources（与
+#   阶段 12 资源注册与      resource-init：超管 login → registerResources（与
 #           根角色授权收敛  前端「资源注册」同一正向通道，含审计行；资源差量入库 +
 #                          预设角色全量 PERMIT 授权）→ DB 反连接终态核验；改密后
 #                          重部署降级为 DB 终态核验（WARN 放行，幂等重跑不阻塞）
@@ -35,11 +46,25 @@
 #   bash deploy.sh --restart      # 部署后重启 gateway
 #   bash deploy.sh --force-build  # 强制重建镜像（默认源码未变自动跳过）
 #   bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变）
-#   bash deploy.sh --dry-run      # 跑到阶段 4（含 staging 与 digest），不构建不起容器
+#   bash deploy.sh --dry-run      # 跑到阶段 5（含源码获取/暂存与 digest），不构建不起容器
 #   bash deploy.sh --self-test    # 内置纯逻辑自检（不碰 docker/podman）
 #
-# 环境变量覆盖（路径类仅构建期使用，不写入 .env）：
+# 环境变量覆盖：
 #   TENANT_PART_ID（默认 nestaging）
+#   GATEWAY_PORT（网关宿主端口，默认 8080；容器内恒 8000；写入 .env）
+#   GATEWAY_BRANCH / ENGINE_BRANCH / SILVAENGINE_BASE_BRANCH /
+#   SILVAENGINE_UTILITY_BRANCH（默认 banyan）/ SILVAENGINE_CONNECTIONS_BRANCH
+#   （阶段 2 clone 分支。默认：网关仓 feature/integrate-with-silvaengine-daemon、
+#   12 引擎仓 main、base/connections main）
+#   GITHUB_URL_BASE（https 仓 clone 基址，默认 https://github.com，可换镜像
+#   加速；引擎私有仓走 SSH，不受该值影响）
+#   GIT_SSH_COMMAND（SSH 仓 clone 用的 ssh 命令，默认已含
+#   StrictHostKeyChecking=accept-new + BatchMode=yes；已设置时尊重不覆盖。
+#   port 22 被墙的服务器可在 ~/.ssh/config 配 Host github.com →
+#   HostName ssh.github.com / Port 443）
+#   GIT_IMAGE（宿主无 git 时的容器兜底镜像，默认 daocloud alpine/git）
+# 路径类（仅构建期使用，不写入 .env；设置即声明该组源码自管——阶段 2 跳过
+# 该组 clone/pull，适合开发机指向本地检出或自定义布局）：
 #   GATEWAY_PACKAGE_DIR、BANYAN_MODULES_DIR、SILVAENGINE_BASE_DIR、
 #   SILVAENGINE_UTILITY_DIR、SILVAENGINE_CONNECTIONS_DIR、VENDOR_DIR
 # 构建期（不写入 .env，按运行时环境取值）：
@@ -49,14 +74,22 @@
 #   POSTGRES_IMAGE / NEO4J_IMAGE / REDIS_IMAGE / DDB_LOCAL_IMAGE（默认 daocloud 加速源）
 # 随时可用：GATEWAY_WAIT_TIMEOUT（健康等待上限秒数，默认 600）
 #
-# 源码路径发现链（默认值，可用上述环境变量覆盖）：
-#   banyan/.. = 本仓根；仓根/.. = 工作区目录（ideabosque，含 silvaengine_gateway/
-#   banyan/modules/、三框架仓）；工作区/.. /docker/api-runtime/vendor（vendor 快照）。
-#   服务器上请按 README.md §前置条件 保持同样相对布局 rsync。
+# 源码获取与发现链（阶段 2）：
+#   工作区 = banyan/ 的祖父目录（服务器上即 /var/www/banyan）。阶段 2 向工作
+#   区 clone 16 仓（ideabosque 4 仓匿名 HTTPS，可经 GITHUB_URL_BASE 走镜像；
+#   banyanos 12 引擎仓为私有仓，走 SSH git@github.com——需宿主 SSH key 具有
+#   banyanos 组织读权限，passphrase key 请先 ssh-add）；已存在且为 git 仓
+#   → fetch + ff 更新；已存在但非 git 目录
+#   → 视为 rsync 手工布局跳过；脏工作区 fail-closed 拒绝更新。vendor 三包内置
+#   banyan/vendor/（含 dynamodb_base TTL 缓存增强补丁，勿以 clone 上游替代）。
+#   交付仓自身（docker-silvaengine-gateway）不在清单内——更新请手工 git pull。
+#   构建期发现链：vendor 优先 banyan/vendor/，其次 <工作区>/../docker/
+#   api-runtime/vendor（VENDOR_DIR 可覆盖）。
 #
 # 幂等性：重复运行复用 .env 与种子 JSON；源码未变（digest 相同）跳过镜像构建；
-# ddb-init 每次重灌种子（-inMemory 重建自愈）。任何阶段失败安全退出并给出
-# 原因与排查建议；修复后直接重跑即可，整体回滚：bash deploy.sh down。
+# 阶段 2 对已 clone 仓执行 fetch+ff（脏工作区拒绝动）；ddb-init 每次重灌种子
+# （-inMemory 重建自愈）。任何阶段失败安全退出并给出原因与排查建议；修复后
+# 直接重跑即可，整体回滚：bash deploy.sh down。
 #
 # 兼容性：bash 3.2+（macOS 自带版本可用），无关联数组 / readarray 依赖。
 # =============================================================================
@@ -81,12 +114,21 @@ REQUIREMENTS="$DEPLOY_DIR/requirements.txt"
 
 COMPOSE_PROJECT="banyan"
 export COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT"
+# 阶段 2 源码获取：ideabosque 4 仓匿名 HTTPS（可换镜像基址）；banyanos 12 引擎
+# 仓为 GitHub 私有仓，走 SSH（需宿主 SSH key）。禁用交互凭据提示防悬挂。
+export GIT_TERMINAL_PROMPT=0
+# SSH 非交互化：TOFU 自动接受新主机指纹（首次连接自动记录，不交互确认）+
+# BatchMode 禁交互提示（key 缺失时 fail-fast 而非挂起）。用户已设
+# GIT_SSH_COMMAND 时尊重不覆盖；~/.ssh/config（如 port 443 变体）依然生效。
+# passphrase key 需先 ssh-add（BatchMode 下不会弹密码框）。
+if [ -z "${GIT_SSH_COMMAND:-}" ]; then
+  export GIT_SSH_COMMAND="ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes"
+fi
 
 GATEWAY_IMAGE_DEFAULT="silvaengine-gateway-banyan:latest"
 DIGEST_LABEL="org.silvaengine.banyan.source-digest"
 
 UP_SERVICES=(ddb-local postgres neo4j redis gateway)
-HOST_PORTS=(8000 8001 5432 6379 7474 7687)
 ENGINE_REPOS=(agent_engine capability_engine knowledge_engine llm_engine \
   memory_engine merchant_engine monitor_engine orchestration_engine \
   perm_engine prompt_engine setting_engine user_engine)
@@ -102,6 +144,27 @@ REQUIRED_ENV_KEYS=(GATEWAY_IMAGE TENANT_PART_ID POSTGRES_USER POSTGRES_PASSWORD 
 WAIT_TIMEOUT="${GATEWAY_WAIT_TIMEOUT:-600}"
 PYTHON_IMAGE="${PYTHON_IMAGE:-docker.m.daocloud.io/library/python:3.12-slim}"
 PIP_INDEX_URL="${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}"
+
+# 网关宿主端口：容器内恒 8000，宿主映射由 GATEWAY_PORT 控制（默认 8080）。
+# 启动时捕获进程环境值——legacy .env 缺键时回退到该值（再回退默认），
+# 已写入 .env 的值优先生效（与数据面镜像键同一模式）。
+GATEWAY_PORT_DEFAULT="8080"
+GATEWAY_PORT_STARTUP="${GATEWAY_PORT:-}"
+GATEWAY_PORT="${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
+
+# 阶段 2 clone 分支（可经环境变量覆盖）
+GATEWAY_BRANCH="${GATEWAY_BRANCH:-feature/integrate-with-silvaengine-daemon}"
+ENGINE_BRANCH="${ENGINE_BRANCH:-main}"
+SILVAENGINE_BASE_BRANCH="${SILVAENGINE_BASE_BRANCH:-main}"
+SILVAENGINE_UTILITY_BRANCH="${SILVAENGINE_UTILITY_BRANCH:-banyan}"
+SILVAENGINE_CONNECTIONS_BRANCH="${SILVAENGINE_CONNECTIONS_BRANCH:-main}"
+GITHUB_URL_BASE="${GITHUB_URL_BASE:-https://github.com}"
+GIT_IMAGE="${GIT_IMAGE:-docker.m.daocloud.io/alpine/git:latest}"
+GIT_MODE=""
+
+# 端口清单初始值（含 GATEWAY_PORT 启动默认）；.env 加载后由
+# populate_host_ports 重算——避免 bash 3.2 下空数组展开碰 set -u。
+HOST_PORTS=("${GATEWAY_PORT}" 8001 5432 6379 7474 7687)
 
 FORCE_ENV=0
 FORCE_BUILD=0
@@ -123,7 +186,7 @@ set_stage() {
   CURRENT_STAGE="$1"
   STAGE_DESC="$2"
   STAGE_HINT="$3"
-  log "── 阶段 $1/10：$2"
+  log "── 阶段 $1/12：$2"
 }
 
 die() {
@@ -167,24 +230,41 @@ SilvaEngine Gateway — Banyan 一键部署（生产镜像模式：源码打进�
   --self-test  内置纯逻辑自检（不碰 docker/podman）
   -h, --help   显示本帮助
 
-运行时（自动探测，docker 优先，podman 兜底）:
+运行时（自动探测，docker 优先，podman 兜底；宿主无 git 时容器 alpine/git 兜底，
+          但 SSH 私有仓必须宿主 git——容器兜底无法访问宿主 SSH key）:
   服务器: Docker + Compose v2（docker-compose-plugin）
   本机:   Podman + docker-compose v2 二进制（brew install docker-compose）
           或 podman-compose；macOS 需先 podman machine start
 
 环境变量（路径类仅构建期使用；镜像类在首次生成 .env 时写入）:
   TENANT_PART_ID              租户 part_id（默认 nestaging）
+  GATEWAY_PORT                网关宿主端口（默认 8080，容器内恒 8000；写入 .env）
+  GATEWAY_BRANCH              网关仓分支（默认 feature/integrate-with-silvaengine-daemon）
+  ENGINE_BRANCH               12 引擎仓分支（默认 main）
+  SILVAENGINE_BASE_BRANCH     框架仓 silvaengine_base 分支（默认 main）
+  SILVAENGINE_UTILITY_BRANCH  框架仓 silvaengine_utility 分支（默认 banyan）
+  SILVAENGINE_CONNECTIONS_BRANCH 框架仓 silvaengine_connections 分支（默认 main）
+  GITHUB_URL_BASE             https 仓 clone 基址（默认 https://github.com；
+                              引擎私有仓走 SSH 不受影响）
+  GIT_SSH_COMMAND             SSH 仓所用 ssh 命令（默认含
+                              StrictHostKeyChecking=accept-new + BatchMode=yes；
+                              port 22 被墙可经 ~/.ssh/config 切 443）
+  GIT_IMAGE                   宿主无 git 时的兜底镜像（默认 daocloud alpine/git）
   GATEWAY_PACKAGE_DIR         网关包目录（默认 <工作区>/silvaengine_gateway/silvaengine_gateway）
   BANYAN_MODULES_DIR          Banyan 12 引擎目录（默认 <工作区>/banyan/modules）
   SILVAENGINE_BASE_DIR        框架仓 silvaengine_base（默认 <工作区>/silvaengine_base）
   SILVAENGINE_UTILITY_DIR     框架仓 silvaengine_utility
   SILVAENGINE_CONNECTIONS_DIR 框架仓 silvaengine_connections
-  VENDOR_DIR                  vendor 快照（默认 <工作区>/../docker/api-runtime/vendor）
+  VENDOR_DIR                  vendor 快照（默认 banyan/vendor/ 内置；其次
+                              <工作区>/../docker/api-runtime/vendor）
   PYTHON_IMAGE                构建用基础镜像（默认 daocloud 加速源）
   PIP_INDEX_URL               构建用 pip 源（默认阿里云）
   POSTGRES_IMAGE / NEO4J_IMAGE / REDIS_IMAGE / DDB_LOCAL_IMAGE
                               数据面镜像（首次生成 .env 时的默认值）
   GATEWAY_WAIT_TIMEOUT        健康等待上限秒数（默认 600）
+
+注：设置任一 *_DIR 路径覆盖即声明该组源码自管，阶段 2 跳过该组 clone/pull
+（开发机/自定义布局用；vendor 组无 clone 行为，仅切换构建来源目录）。
 USAGE
 }
 
@@ -323,7 +403,150 @@ image_label() {
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 2：配置生成与校验
+# 阶段 1b：git 探测与执行器（宿主 git 优先；缺失时容器 alpine/git 兜底）
+# ---------------------------------------------------------------------------
+
+detect_git() {
+  GIT_MODE=""
+  if command -v git >/dev/null 2>&1; then
+    GIT_MODE=host
+    log "git：宿主命令（$(git --version 2>&1 || echo 未知版本)）"
+    return 0
+  fi
+  log "宿主未安装 git——尝试容器兜底：$GIT_IMAGE"
+  if "$RUNTIME_BIN" pull "$GIT_IMAGE" >/dev/null 2>&1; then
+    GIT_MODE=container
+    log "git：容器镜像兜底（$GIT_IMAGE）"
+    return 0
+  fi
+  die "宿主未安装 git 且兜底镜像 $GIT_IMAGE 拉取失败——请安装宿主 git（apt install git / yum install git / brew install git），或 export GIT_IMAGE=<可达镜像> 后重跑；设 *_DIR 路径覆盖的组不受影响"
+}
+
+# git 执行器：host 模式直跑宿主 git；container 模式经 alpine/git 容器
+# （挂载整个工作区，相对路径操作——宿主无 git 的服务器保住「只需 Docker」）。
+git_exec() {
+  local dir="$1"
+  shift
+  case "$GIT_MODE" in
+    host)
+      git -C "$dir" "$@"
+      ;;
+    container)
+      "$RUNTIME_BIN" run --rm \
+        -v "$WS_DIR:/gitwork" \
+        -w "/gitwork/${dir#"$WS_DIR"/}" \
+        "$GIT_IMAGE" git "$@"
+      ;;
+    *)
+      die "git 未探测（内部错误：git_exec 先于 detect_git 调用）"
+      ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# 阶段 2：源码获取（clone / pull 16 仓；vendor 三包内置，不在此列）
+# ---------------------------------------------------------------------------
+
+# 16 仓清单：org/repo.git|分支|相对工作区目标路径|组路径覆盖变量名|协议
+# 协议：ideabosque 4 仓 https（公开，可镜像加速）；banyanos 12 引擎仓
+# ssh（GitHub 私有仓，scp 形式 git@github.com:<repo>，需宿主 SSH key）
+repo_manifest() {
+  printf '%s\n' \
+    "ideabosque/silvaengine_gateway.git|${GATEWAY_BRANCH}|silvaengine_gateway|GATEWAY_PACKAGE_DIR|https" \
+    "banyanos/agent_engine.git|${ENGINE_BRANCH}|banyan/modules/agent_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/capability_engine.git|${ENGINE_BRANCH}|banyan/modules/capability_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/knowledge_engine.git|${ENGINE_BRANCH}|banyan/modules/knowledge_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/llm_engine.git|${ENGINE_BRANCH}|banyan/modules/llm_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/memory_engine.git|${ENGINE_BRANCH}|banyan/modules/memory_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/merchant_engine.git|${ENGINE_BRANCH}|banyan/modules/merchant_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/monitor_engine.git|${ENGINE_BRANCH}|banyan/modules/monitor_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/orchestration_engine.git|${ENGINE_BRANCH}|banyan/modules/orchestration_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/perm_engine.git|${ENGINE_BRANCH}|banyan/modules/perm_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/prompt_engine.git|${ENGINE_BRANCH}|banyan/modules/prompt_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/setting_engine.git|${ENGINE_BRANCH}|banyan/modules/setting_engine|BANYAN_MODULES_DIR|ssh" \
+    "banyanos/user_engine.git|${ENGINE_BRANCH}|banyan/modules/user_engine|BANYAN_MODULES_DIR|ssh" \
+    "ideabosque/silvaengine_base.git|${SILVAENGINE_BASE_BRANCH}|silvaengine_base|SILVAENGINE_BASE_DIR|https" \
+    "ideabosque/silvaengine_utility.git|${SILVAENGINE_UTILITY_BRANCH}|silvaengine_utility|SILVAENGINE_UTILITY_DIR|https" \
+    "ideabosque/silvaengine_connections.git|${SILVAENGINE_CONNECTIONS_BRANCH}|silvaengine_connections|SILVAENGINE_CONNECTIONS_DIR|https"
+}
+
+# clone URL：ssh 仓固定 scp 形式（不吃 GITHUB_URL_BASE，GitHub 私有仓
+# 无镜像可走）；默认 https → GITHUB_URL_BASE 拼接（尾斜杠归一，可换镜像）
+clone_url() {
+  if [ "${2:-https}" = "ssh" ]; then
+    printf 'git@github.com:%s' "$1"
+  else
+    printf '%s/%s' "${GITHUB_URL_BASE%/}" "$1"
+  fi
+}
+
+# $1 = 组路径覆盖变量名；为空/未设置 → 脚本管理该仓（返回 0）；
+# 已设置 → 调用方自管（返回非零），阶段 2 跳过该组 clone/pull
+group_script_managed() {
+  [ -z "${!1:-}" ]
+}
+
+# git 工作区干净（无未提交改动与未跟踪文件）返回 0；脏仓/非 git 目录非零
+repo_clean() {
+  local out
+  out=$(git_exec "$1" status --porcelain 2>/dev/null) || return 1
+  [ -z "$out" ]
+}
+
+# 幂等源码获取：缺失→clone；已有 git 仓→fetch+ff（脏仓 fail-closed 拒绝
+# 更新）；已有非 git 目录→视为 rsync 手工布局跳过；组覆盖已设置→整组跳过。
+# 引擎仓走 SSH（私有），ideabosque 仓走 https（公开）——容器兜底模式无宿主
+# SSH key，遇到 ssh 仓 fail-closed。heredoc 喂入清单避免管道 subshell 丢
+# 失计数器（bash 3.2 兼容）。
+acquire_sources() {
+  local n_clone=0 n_update=0 n_skip=0 repo branch rel ovr scheme tgt url hint
+  while IFS='|' read -r repo branch rel ovr scheme; do
+    [ -n "$repo" ] || continue
+    scheme="${scheme:-https}"
+    if ! group_script_managed "$ovr"; then
+      n_skip=$((n_skip + 1))
+      continue
+    fi
+    # 容器 git 兜底无宿主 SSH key，无法访问 GitHub 私有仓——fail-closed
+    if [ "$scheme" = "ssh" ] && [ "$GIT_MODE" = "container" ]; then
+      die "SSH 私有仓（$repo）需要宿主 git——容器兜底模式无法访问宿主 SSH key。请在宿主安装 git（apt/yum/brew install git）后重跑，或设置环境变量 $ovr 指向已有源码目录跳过该组 clone"
+    fi
+    tgt="$WS_DIR/$rel"
+    url=$(clone_url "$repo" "$scheme")
+    if [ "$scheme" = "ssh" ]; then
+      hint="检查网络与宿主 SSH key 及 banyanos 组织访问权（ssh -T git@github.com 验证连通性与授权；passphrase key 请先 ssh-add）"
+    else
+      hint="检查网络/代理与 $url 可达性（可 export GITHUB_URL_BASE=<镜像基址>）"
+    fi
+    if [ -e "$tgt/.git" ]; then
+      if ! repo_clean "$tgt"; then
+        die "工作区不干净：$rel（存在未提交改动或未跟踪文件）——为避免覆盖手工修改，脚本拒绝自动更新。请先在 $tgt 提交或 stash；或设置环境变量 $ovr 指定其他源码目录"
+      fi
+      log "  + update $repo（$branch，$scheme）→ $rel"
+      git_exec "$tgt" fetch origin "$branch" \
+        || die "git fetch 失败：$repo 分支 $branch——$hint"
+      git_exec "$tgt" checkout "$branch" \
+        || die "git checkout 失败：$repo 分支 $branch——请手工检查 $tgt（远端无此分支时改用 *_BRANCH 环境变量指定）"
+      git_exec "$tgt" merge --ff-only "origin/$branch" \
+        || die "git merge --ff-only 失败：$repo（本地与远端分叉）——请手工处理 $tgt 后重跑"
+      n_update=$((n_update + 1))
+    elif [ -d "$tgt" ]; then
+      log "  - 跳过 $rel（目录已存在且非 git 仓——按手工/rsync 布局处理）"
+      n_skip=$((n_skip + 1))
+    else
+      log "  + clone $repo（$branch，$scheme）→ $rel"
+      git_exec "$WS_DIR" clone --single-branch --branch "$branch" "$url" "$rel" \
+        || die "git clone 失败：$repo 分支 $branch——检查 $WS_DIR 写权限；$hint"
+      n_clone=$((n_clone + 1))
+    fi
+  done <<MANIFEST
+$(repo_manifest)
+MANIFEST
+  log "源码获取完成：clone $n_clone / update $n_update / 跳过 $n_skip（vendor 三包已内置于 banyan/vendor/，无需 clone）"
+}
+
+# ---------------------------------------------------------------------------
+# 阶段 3：配置生成与校验
 # ---------------------------------------------------------------------------
 
 # 把 .env 相关键读入 shell 变量（构建/渲染/摘要使用）
@@ -336,6 +559,19 @@ load_env_values() {
   NEO4J_PASSWORD="${NEO4J_AUTH#neo4j/}"
   REDIS_PASSWORD=$(env_get REDIS_PASSWORD)
   GATEWAY_IMAGE=$(env_get GATEWAY_IMAGE)
+  GATEWAY_PORT=$(env_get GATEWAY_PORT)
+  if [ -z "$GATEWAY_PORT" ]; then
+    # legacy .env 缺键：回退启动环境值（再回退默认）
+    GATEWAY_PORT="${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
+  fi
+  # 导出为权威值：compose 插值优先取 shell 环境，保证端口预检/摘要与
+  # 实际发布端口一致（防「用户导出的旧值压过 .env」错位）
+  export GATEWAY_PORT
+}
+
+# 依 GATEWAY_PORT 重算宿主端口清单（load_env_values 之后调用）
+populate_host_ports() {
+  HOST_PORTS=("${GATEWAY_PORT}" 8001 5432 6379 7474 7687)
 }
 
 # 配置值必须纯字母数字：本脚本用 sed 渲染种子 JSON，放宽字符集会引入
@@ -368,6 +604,9 @@ generate_env() {
 # --- 网关镜像（deploy.sh 构建；ddb-init 复用同一镜像）---
 GATEWAY_IMAGE=${GATEWAY_IMAGE_DEFAULT}
 
+# --- 网关宿主端口（容器内恒 8000；compose 端口映射 ${GATEWAY_PORT}:8000）---
+GATEWAY_PORT=${GATEWAY_PORT}
+
 # --- 租户 ---
 TENANT_PART_ID=${part_id}
 
@@ -384,7 +623,7 @@ POSTGRES_DB=banyan
 NEO4J_AUTH=neo4j/${neo4j_pw}
 REDIS_PASSWORD=${redis_pw}
 
-# --- 超级管理员（阶段 10 admin-init 使用；默认密码建议部署后立即修改）---
+# --- 超级管理员（阶段 11 admin-init 使用；默认密码建议部署后立即修改）---
 ADMIN_ACCOUNT=${ADMIN_ACCOUNT:-admin@banyanos.dev}
 ADMIN_PASSWORD=${ADMIN_PASSWORD:-B@nyan0s.d3v}
 
@@ -414,7 +653,7 @@ EOF
 ensure_admin_env_keys() {
   local changed=0
   if [ -z "$(env_get ADMIN_ACCOUNT)" ]; then
-    printf '\n# --- 超级管理员（阶段 10 admin-init 使用）---\nADMIN_ACCOUNT=%s\n' \
+    printf '\n# --- 超级管理员（阶段 11 admin-init 使用）---\nADMIN_ACCOUNT=%s\n' \
       "${ADMIN_ACCOUNT:-admin@banyanos.dev}" >> "$ENV_FILE"
     changed=1
   fi
@@ -426,6 +665,19 @@ ensure_admin_env_keys() {
   if [ "$changed" = "1" ]; then
     chmod 600 "$ENV_FILE"
     log "已补全 .env 超管键（ADMIN_ACCOUNT/ADMIN_PASSWORD，默认值；已有值不覆盖）"
+  fi
+}
+
+# GATEWAY_PORT 键补全：存量 .env（本批次前生成）缺键时追加当前生效值
+# （启动环境值或默认 8080）；已有值不覆盖。写入 .env 是为了让 compose 插值
+# 与脚本端口预检/摘要保持同一事实源（compose 对 legacy .env 自动回退 8080，
+# 但补键后配置即可长期自洽）。
+ensure_gateway_port_env_key() {
+  if [ -z "$(env_get GATEWAY_PORT)" ]; then
+    printf '\n# --- 网关宿主端口（容器内恒 8000；compose 映射 ${GATEWAY_PORT}:8000）---\nGATEWAY_PORT=%s\n' \
+      "$GATEWAY_PORT" >> "$ENV_FILE"
+    chmod 600 "$ENV_FILE"
+    log "已补全 .env 网关端口键（GATEWAY_PORT=$GATEWAY_PORT；已有值不覆盖）"
   fi
 }
 
@@ -516,7 +768,7 @@ resolve_source_paths() {
     fi
   fi
   if [ -z "${VENDOR_DIR:-}" ]; then
-    if ! VENDOR_DIR=$(first_existing "$UP_DIR/docker/api-runtime/vendor"); then
+    if ! VENDOR_DIR=$(first_existing "$DEPLOY_DIR/vendor" "$UP_DIR/docker/api-runtime/vendor"); then
       VENDOR_DIR=""
     fi
   fi
@@ -617,16 +869,17 @@ ensure_config() {
 
   validate_env_keys
   ensure_admin_env_keys
+  ensure_gateway_port_env_key
   resolve_source_paths
   validate_source_paths
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 3：端口预检
+# 阶段 4：端口预检（含同名前缀异项目容器互斥）
 # ---------------------------------------------------------------------------
 
 check_ports() {
-  local p holder proj
+  local p holder proj c
   for p in "${HOST_PORTS[@]}"; do
     if port_busy "$p"; then
       holder=$("$RUNTIME_BIN" ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
@@ -638,18 +891,34 @@ check_ports() {
         if [ "$proj" = "$COMPOSE_PROJECT" ]; then
           log "端口 $p 被本栈容器（$holder）占用——重复运行场景，继续"
         else
-          die "端口 $p 被其他容器占用（name=$holder，compose 项目=${proj:-未知}）——请停止该容器或调整端口映射；若为网关仓 bind-mount 变体（deploy/）的容器，两形态请勿同时运行"
+          die "端口 $p 被其他容器占用（name=$holder，compose 项目=${proj:-未知}）——请停止该容器或调整端口映射（GATEWAY_PORT 可改）"
         fi
       else
-        die "端口 $p 被宿主机进程占用——排查：lsof -i :$p（macOS）/ ss -ltnp | grep :$p（Linux）"
+        die "端口 $p 被宿主机进程占用——排查：lsof -i :$p（macOS）/ ss -ltnp | grep :$p（Linux）；网关端口可经 GATEWAY_PORT 换道"
       fi
     fi
   done
-  log "端口预检通过：${HOST_PORTS[*]}"
+
+  # 同栈互斥：网关仓 deploy/（bind-mount 变体）与本栈容器同名前缀
+  #（silvaengine-gateway*）。端口分道（本栈默认 8080，变体 8000）后端口预检
+  # 不再天然互斥，改以容器名前缀 + compose 项目归属判定：非本项目的同名前缀
+  # 容器运行中 → fail-closed（两形态共容器名与卷名，并存必冲突）。
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    proj=$("$RUNTIME_BIN" inspect \
+      -f '{{index .Config.Labels "com.docker.compose.project"}}' \
+      "$c" 2>/dev/null || true)
+    if [ "$proj" != "$COMPOSE_PROJECT" ]; then
+      die "检测到疑似网关仓 deploy/（bind-mount 变体）容器运行中：$c（compose 项目=${proj:-未知}）——两形态共用容器名前缀与数据卷，请先在该形态目录执行 docker compose down 后重跑"
+    fi
+  done <<EOF
+$("$RUNTIME_BIN" ps --format '{{.Names}}' 2>/dev/null | grep '^silvaengine-gateway' || true)
+EOF
+  log "端口预检通过：${HOST_PORTS[*]}（无同名前缀异项目容器）"
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 4：暂存构建上下文 + 源码 digest
+# 阶段 5：暂存构建上下文 + 源码 digest
 # ---------------------------------------------------------------------------
 
 # tar 排除清单（bsdtar/GNU tar 双兼容模式：'./x' 根级 + '*/x' 任意深 + '*.pyc' 后缀）
@@ -755,7 +1024,7 @@ combined_digest() {
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 5：镜像构建（digest 相同则跳过）
+# 阶段 6：镜像构建（digest 相同则跳过）
 # ---------------------------------------------------------------------------
 
 build_image() {
@@ -785,7 +1054,7 @@ build_image() {
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 9：健康与日志
+# 阶段 10：健康与日志
 # ---------------------------------------------------------------------------
 
 wait_healthy() {
@@ -862,7 +1131,7 @@ check_log() {
 }
 
 # ---------------------------------------------------------------------------
-# 阶段 9：摘要
+# 摘要（部署完成后输出）
 # ---------------------------------------------------------------------------
 
 print_summary() {
@@ -871,26 +1140,29 @@ print_summary() {
 ============================================================
  SilvaEngine Gateway（Banyan 数据面 · 生产镜像模式）部署完成
 ============================================================
-  网关地址      : http://<服务器IP>:8000   （本机探活 curl http://127.0.0.1:8000/health）
-  GraphQL 入口  : POST http://<服务器IP>:8000/beta/core/banyan/<engine>_engine_graphql
+  网关地址      : http://<服务器IP>:${GATEWAY_PORT}（本机探活 curl http://127.0.0.1:${GATEWAY_PORT}/health；容器内恒 8000）
+  GraphQL 入口  : POST http://<服务器IP>:${GATEWAY_PORT}/beta/core/banyan/<engine>_engine_graphql
   租户 part_id  : ${TENANT_PART_ID}
   网关镜像      : ${GATEWAY_IMAGE}
                   （源码 digest 已写入镜像 label；未变更时重跑自动跳过构建）
+  源码树        : 16 仓 git 管理（阶段 2 clone/pull；ideabosque 4 仓 https，
+                  banyanos 12 引擎仓 SSH 私有仓；交付仓自身更新请手工 git pull）
+                  + vendor 三包内置 banyan/vendor/（勿 clone 上游替代）
   生成文件      : .env（数据面密码 + 超管凭据，600 权限，勿提交）
                   env/se-configdata.local.json（JWT/x-api-key，600 权限，勿提交）
   数据面        : postgres / neo4j / redis + DynamoDB Local（127.0.0.1:8001 仅本机）
   超级管理员    : $(env_get ADMIN_ACCOUNT)
                   （密码在 .env 的 ADMIN_PASSWORD——建议首次登录后立即修改；
-                   阶段 10 已绑定 platform:super_admin，重跑只收敛不覆盖密码）
-  平台资源      : 阶段 11 已注册并全量授权根角色（tenant_perm_resource 全集
+                   阶段 11 已绑定 platform:super_admin，重跑只收敛不覆盖密码）
+  平台资源      : 阶段 12 已注册并全量授权根角色（tenant_perm_resource 全集
                   PERMIT → platform:super_admin，含菜单/按钮可见性与 API 资源；
                   升级重跑自动收敛新资源）
 
 验证步骤：
-  curl -sS http://127.0.0.1:8000/health
+  curl -sS http://127.0.0.1:${GATEWAY_PORT}/health
   bash deploy.sh status
   # 登录 mutation 骨架（携带 part_id 头 + Banyan JWT）：
-  # curl -sS -X POST http://127.0.0.1:8000/beta/core/banyan/user_engine_graphql \\
+  # curl -sS -X POST http://127.0.0.1:${GATEWAY_PORT}/beta/core/banyan/user_engine_graphql \\
   #   -H 'content-type: application/json' -H 'part_id: ${TENANT_PART_ID}' \\
   #   -d '{"query": "mutation { ... }"}'
 
@@ -901,7 +1173,7 @@ print_summary() {
   bash deploy.sh --force-build   # 源码变更后强制重建镜像
   bash deploy.sh --force-env     # 重新生成全部密码
 
-安全提醒：公网防火墙只放行 8000；8001/5432/6379/7474/7687 仅供本机调试。
+安全提醒：公网防火墙只放行 ${GATEWAY_PORT}；8001/5432/6379/7474/7687 仅供本机调试。
 ============================================================
 EOF
 }
@@ -914,16 +1186,22 @@ cmd_up() {
   set_stage 1 "环境检测（Docker / Compose v2 或 Podman / compose provider）" \
     "服务器：安装 Docker 与 docker-compose-plugin；本机 Podman：brew install docker-compose 且 podman machine start；权限：sudo usermod -aG docker \$USER 后重新登录"
   detect_runtime
+  detect_git
 
-  set_stage 2 "配置生成与源码树校验" \
+  set_stage 2 "源码获取（clone / pull 16 仓；引擎私有仓走 SSH）" \
+    "引擎仓 SSH 失败：ssh -T git@github.com 验证 key 与 banyanos 组织访问权（passphrase key 先 ssh-add；port 22 被墙可经 ~/.ssh/config 切 443）；https 仓失败可 export GITHUB_URL_BASE=<镜像基址>；脏工作区 fail-closed 防覆盖手工修改（可提交/stash 或设 *_DIR 覆盖）；vendor 三包已内置 banyan/vendor/"
+  acquire_sources
+
+  set_stage 3 "配置生成与源码树校验" \
     "源路径可用环境变量覆盖（bash deploy.sh -h 查看清单）；.env 改动后重跑即生效；--force-env 重新生成"
   ensure_config
+  populate_host_ports
 
-  set_stage 3 "端口预检（${HOST_PORTS[*]}）" \
-    "占用排查：lsof -i :<port>（macOS）/ ss -ltnp | grep :<port>（Linux）"
+  set_stage 4 "端口预检（${HOST_PORTS[*]}）" \
+    "占用排查：lsof -i :<port>（macOS）/ ss -ltnp | grep :<port>（Linux）；网关端口可经 GATEWAY_PORT 换道"
   check_ports
 
-  set_stage 4 "暂存构建上下文（staging + 源码 digest）" \
+  set_stage 5 "暂存构建上下文（staging + 源码 digest）" \
     "暂存为全量重建，无陈旧残留；排除 .git/.venv 等失败时检查 tar 版本"
   stage_context
   DIGEST=$(combined_digest) \
@@ -941,23 +1219,23 @@ cmd_up() {
     else
       log "--dry-run 结论：将构建镜像 $GATEWAY_IMAGE（digest 未命中既有镜像）"
     fi
-    log "--dry-run 完成：环境/配置/端口/暂存全部通过，未构建镜像、未启动容器"
+    log "--dry-run 完成：环境/源码获取/配置/端口/暂存全部通过，未构建镜像、未启动容器"
     return 0
   fi
 
-  set_stage 5 "构建网关镜像（源码未变自动跳过）" \
+  set_stage 6 "构建网关镜像（源码未变自动跳过）" \
     "基础镜像/pip 源可经 PYTHON_IMAGE / PIP_INDEX_URL 覆盖；构建慢属正常（pip 全量安装）"
   build_image "$DIGEST"
 
-  set_stage 6 "启动 DynamoDB Local" \
+  set_stage 7 "启动 DynamoDB Local" \
     "镜像拉取失败检查网络；DDB_LOCAL_IMAGE 可换源（.env）"
   dc up -d ddb-local
 
-  set_stage 7 "初始化 se-configdata（建表/灌种子/核验）" \
+  set_stage 8 "初始化 se-configdata（建表/灌种子/核验）" \
     "失败多为种子 JSON 渲染或容器网络问题；详情：docker compose logs ddb-init；重跑幂等"
   dc run --rm ddb-init
 
-  set_stage 8 "启动网关与数据面（五服务）" \
+  set_stage 9 "启动网关与数据面（五服务）" \
     "镜像拉取失败检查网络/数据面镜像源（.env 中 *_IMAGE）；健康等待可用 GATEWAY_WAIT_TIMEOUT 延长"
   dc up -d "${UP_SERVICES[@]}"
   if [ "$RESTART" = "1" ]; then
@@ -965,17 +1243,17 @@ cmd_up() {
     dc restart gateway
   fi
 
-  set_stage 9 "健康检查与启动验证" \
+  set_stage 10 "健康检查与启动验证" \
     "看报错：$RUNTIME_BIN logs silvaengine-gateway；首启较慢可用 GATEWAY_WAIT_TIMEOUT=900 重跑"
   wait_healthy
   verify_gateway
   check_log required
 
-  set_stage 10 "初始化超级管理员（幂等收敛，密码永不覆盖）" \
+  set_stage 11 "初始化超级管理员（幂等收敛，密码永不覆盖）" \
     "失败多为 PG 连接或预设角色未就绪；详情：$RUNTIME_BIN compose logs admin-init；重跑幂等"
   dc run --rm admin-init
 
-  set_stage 11 "资源注册与根角色授权收敛（幂等，重跑只差量补齐）" \
+  set_stage 12 "资源注册与根角色授权收敛（幂等，重跑只差量补齐）" \
     "失败看 failed_items 与网关日志：$RUNTIME_BIN logs silvaengine-gateway；部分引擎导入失败重跑自动补齐；改密后重部署走 DB 终态核验降级"
   dc run --rm resource-init
 
@@ -1096,7 +1374,39 @@ cmd_self_test() {
   expect_eq ".env 权限 600" \
     "$(stat -f '%Lp' "$ENV_FILE" 2>/dev/null || stat -c '%a' "$ENV_FILE" 2>/dev/null || true)" "600"
 
-  # --- 超管键（阶段 10 admin-init）---
+  # --- GATEWAY_PORT（写入 .env / legacy 回退 / 自定义优先）---
+  expect_eq "generate_env 写入 GATEWAY_PORT" "$(env_get GATEWAY_PORT)" "$GATEWAY_PORT"
+  local saved_gp_env="$ENV_FILE" saved_gp="$GATEWAY_PORT"
+  ENV_FILE="$tmp/env_no_gp"
+  printf 'GATEWAY_IMAGE=x\n' > "$ENV_FILE"
+  GATEWAY_PORT=""
+  load_env_values
+  expect_eq "legacy .env 缺 GATEWAY_PORT 回退启动值/默认" \
+    "$GATEWAY_PORT" "${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
+  ensure_gateway_port_env_key
+  expect_eq "补键：legacy .env 追加 GATEWAY_PORT" \
+    "$(env_get GATEWAY_PORT)" "${GATEWAY_PORT_STARTUP:-$GATEWAY_PORT_DEFAULT}"
+  expect_eq "补键：追加后仅一行 GATEWAY_PORT" \
+    "$(grep -c '^GATEWAY_PORT=' "$ENV_FILE" || true)" "1"
+  ENV_FILE="$tmp/env_custom_gp"
+  printf 'GATEWAY_PORT=9099\n' > "$ENV_FILE"
+  GATEWAY_PORT=""
+  load_env_values
+  expect_eq ".env 已有 GATEWAY_PORT 优先于环境值" "$GATEWAY_PORT" "9099"
+  ensure_gateway_port_env_key
+  expect_eq "补键：已有 GATEWAY_PORT 不追加重复行" \
+    "$(grep -c '^GATEWAY_PORT=' "$ENV_FILE" || true)" "1"
+  GATEWAY_PORT="$saved_gp"
+  populate_host_ports
+  expect_eq "HOST_PORTS[0] 为 GATEWAY_PORT" "${HOST_PORTS[0]}" "$GATEWAY_PORT"
+  expect_eq "HOST_PORTS[1] 为 8001" "${HOST_PORTS[1]}" "8001"
+  expect_eq "HOST_PORTS[2] 为 5432" "${HOST_PORTS[2]}" "5432"
+  expect_eq "HOST_PORTS[3] 为 6379" "${HOST_PORTS[3]}" "6379"
+  expect_eq "HOST_PORTS[4] 为 7474" "${HOST_PORTS[4]}" "7474"
+  expect_eq "HOST_PORTS[5] 为 7687" "${HOST_PORTS[5]}" "7687"
+  ENV_FILE="$saved_gp_env"
+
+  # --- 超管键（阶段 11 admin-init）---
   expect_eq "ADMIN_ACCOUNT 默认值" "$(env_get ADMIN_ACCOUNT)" "admin@banyanos.dev"
   expect_eq "ADMIN_PASSWORD 默认值" "$(env_get ADMIN_PASSWORD)" "B@nyan0s.d3v"
   expect_eq "ADMIN_PASSWORD 含特殊字符（严禁 assert_alnum/sed 路径）" \
@@ -1142,6 +1452,60 @@ cmd_self_test() {
   # --- validate_env_keys 通过 ---
   validate_env_keys
   expect_eq "validate_env_keys 生成 .env 全通过" "ok" "ok"
+
+  # --- 阶段 2 源码获取（manifest / URL / 组管理 / git 夹具）---
+  expect_eq "repo_manifest 行数 16" "$(repo_manifest | wc -l | tr -d ' ')" "16"
+  expect_eq "repo_manifest ssh 仓 12 行（引擎私有仓）" \
+    "$(repo_manifest | grep -c '|ssh$' || true)" "12"
+  expect_eq "repo_manifest https 仓 4 行（ideabosque 公开仓）" \
+    "$(repo_manifest | grep -c '|https$' || true)" "4"
+  expect_eq "repo_manifest 首行（网关仓+分支+目标+覆盖组+协议）" \
+    "$(repo_manifest | head -1)" \
+    "ideabosque/silvaengine_gateway.git|${GATEWAY_BRANCH}|silvaengine_gateway|GATEWAY_PACKAGE_DIR|https"
+  expect_eq "repo_manifest agent_engine 行（ssh 协议）" \
+    "$(repo_manifest | grep '^banyanos/agent_engine')" \
+    "banyanos/agent_engine.git|${ENGINE_BRANCH}|banyan/modules/agent_engine|BANYAN_MODULES_DIR|ssh"
+  expect_eq "repo_manifest utility 行（banyan 分支，https 协议）" \
+    "$(repo_manifest | grep 'silvaengine_utility')" \
+    "ideabosque/silvaengine_utility.git|${SILVAENGINE_UTILITY_BRANCH}|silvaengine_utility|SILVAENGINE_UTILITY_DIR|https"
+  local saved_hub="$GITHUB_URL_BASE"
+  GITHUB_URL_BASE="https://github.com/"
+  expect_eq "clone_url 尾斜杠归一" "$(clone_url org/repo.git)" "https://github.com/org/repo.git"
+  GITHUB_URL_BASE="https://ghproxy.example/https/github.com"
+  expect_eq "clone_url 自定义基址拼接" \
+    "$(clone_url org/repo.git)" "https://ghproxy.example/https/github.com/org/repo.git"
+  expect_eq "clone_url ssh 仓固定 scp 形式（不吃 GITHUB_URL_BASE）" \
+    "$(clone_url banyanos/agent_engine.git ssh)" "git@github.com:banyanos/agent_engine.git"
+  expect_eq "clone_url https 仓显式协议走基址" \
+    "$(clone_url ideabosque/silvaengine_base.git https)" \
+    "https://ghproxy.example/https/github.com/ideabosque/silvaengine_base.git"
+  GITHUB_URL_BASE="$saved_hub"
+  local t_gsm=""
+  expect_eq "group_script_managed 未覆盖→脚本管理" \
+    "$(group_script_managed t_gsm >/dev/null 2>&1 && echo 1 || true)" "1"
+  t_gsm="/some/path"
+  expect_eq "group_script_managed 已覆盖→自管跳过" \
+    "$(group_script_managed t_gsm >/dev/null 2>&1 && echo 1 || true)" ""
+  if command -v git >/dev/null 2>&1; then
+    local gt="$tmp/gitrepo" saved_git_mode="$GIT_MODE"
+    GIT_MODE=host
+    git init -q "$gt" 2>/dev/null
+    git -C "$gt" config user.email t@t.local
+    git -C "$gt" config user.name t
+    touch "$gt/f"
+    git -C "$gt" add f
+    git -C "$gt" commit -qm init
+    expect_eq "repo_clean 干净仓通过" "$(repo_clean "$gt" && echo 1 || true)" "1"
+    touch "$gt/untracked"
+    expect_eq "repo_clean 脏仓（未跟踪文件）非零" \
+      "$(repo_clean "$gt" >/dev/null 2>&1 && echo 1 || true)" ""
+    rm -f "$gt/untracked"
+    expect_eq "repo_clean 非 git 目录非零" \
+      "$(repo_clean "$tmp" >/dev/null 2>&1 && echo 1 || true)" ""
+    GIT_MODE="$saved_git_mode"
+  else
+    printf '  （跳过 git 夹具测试：宿主无 git）\n'
+  fi
 
   # --- port_busy 空闲端口判定 ---
   local free_p="" p
@@ -1217,7 +1581,7 @@ cmd_self_test() {
   fi
   BUILD_CONTEXT="$saved_ctx"
 
-  # --- 真实源码树全量暂存（源码树存在时执行；等价于 dry-run 阶段 4）---
+  # --- 真实源码树全量暂存（源码树存在时执行；等价于 dry-run 阶段 5）---
   resolve_source_paths
   if [ -n "$GATEWAY_PACKAGE_DIR" ] && [ -f "$GATEWAY_PACKAGE_DIR/app.py" ] \
     && [ -n "$BANYAN_MODULES_DIR" ] && [ -d "$BANYAN_MODULES_DIR/agent_engine" ] \

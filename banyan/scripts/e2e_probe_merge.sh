@@ -1,6 +1,6 @@
 #!/bin/bash
 # E2E probes for the merged gateway (Banyan hosting built-in).
-B="http://127.0.0.1:8000"
+B="http://127.0.0.1:${GATEWAY_PORT:-8080}"
 IDEM="e2e-merge-$(date +%s)"
 
 echo "== P1: anonymous registerUser (expect 200, GraphQL ok) =="

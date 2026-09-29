@@ -1,9 +1,9 @@
 #!/bin/bash
 # Super-admin login loop against the merged gateway.
-B="http://127.0.0.1:8000"
 ENVF="banyan/.env"
 # shellcheck disable=SC1090
-eval "$(grep -E '^(ADMIN_ACCOUNT|ADMIN_PASSWORD)=' "$ENVF" | sed 's/^/export /')"
+eval "$(grep -E '^(ADMIN_ACCOUNT|ADMIN_PASSWORD|GATEWAY_PORT)=' "$ENVF" | sed 's/^/export /')"
+B="http://127.0.0.1:${GATEWAY_PORT:-8080}"
 IDEM="e2e-admin-$(date +%s)"
 echo "admin account: $ADMIN_ACCOUNT"
 

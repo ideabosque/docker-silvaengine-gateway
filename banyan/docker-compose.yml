@@ -14,7 +14,9 @@
 #
 # 与网关仓 deploy/docker-compose.yml（bind-mount 变体）的关系：本文件是
 # 生产镜像形态 —— gateway 无挂载、依赖已打进镜像；数据面服务块与 P0 逐字
-# 一致（端口/健康检查/内存上限/卷名不变），两个形态共用同一验收清单。
+# 一致（健康检查/内存上限/卷名不变；网关宿主端口分道：本栈默认 8080
+# 【${GATEWAY_PORT} 可配，容器内恒 8000】，变体保持 8000），两个形态共用
+# 同一验收清单与容器名前缀（deploy.sh 阶段 4 以容器名归属互斥，请勿同机共存）。
 # =============================================================================
 
 x-logging: &default-logging
@@ -29,7 +31,8 @@ services:
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
     container_name: silvaengine-gateway
     ports:
-      - "8000:8000"
+      # 宿主端口经 .env GATEWAY_PORT 可配（deploy.sh 默认 8080）；容器内恒 8000
+      - "${GATEWAY_PORT:-8080}:8000"
     env_file:
       - ./.env
     environment:
@@ -183,7 +186,7 @@ services:
     logging: *default-logging
 
   admin-init:
-    # 一次性超管引导（阶段 10）：等 PG → 等预设角色（网关冷启动建）→
+    # 一次性超管引导（阶段 11）：等 PG → 等预设角色（网关冷启动建）→
     # 幂等收敛超管用户 + platform:super_admin 绑定（密码永不覆盖）→ 核验。
     # 复用网关镜像（venv 自带 sqlalchemy/psycopg/argon2-cffi），凭据经
     # env_file ./.env（ADMIN_ACCOUNT/ADMIN_PASSWORD + POSTGRES_*）注入；
@@ -205,7 +208,7 @@ services:
     logging: *default-logging
 
   resource-init:
-    # 一次性资源注册与根角色授权收敛（阶段 11）：等网关 /health → 超管
+    # 一次性资源注册与根角色授权收敛（阶段 12）：等网关 /health → 超管
     # login（匿名白名单 Mutation）→ registerResources（平台级 Mutation，
     # 与前端「资源注册」按钮同一正向通道，含审计行；一次调用同时完成
     # 资源差量入库 + 预设角色全量 PERMIT 授权）→ DB 反连接终态核验。

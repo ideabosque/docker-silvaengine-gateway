@@ -65,6 +65,7 @@ ENV PATH="/opt/venv/bin:${PATH}" \
 RUN useradd -m -u 1000 gateway
 USER gateway
 WORKDIR /app
+# 容器内监听恒 8000；宿主映射由 compose 的 ${GATEWAY_PORT:-8080}:8000 控制
 EXPOSE 8000
 
 CMD ["uvicorn", "silvaengine_gateway.app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]
