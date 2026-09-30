@@ -31,7 +31,7 @@ services:
   gateway:
     # deploy.sh 构建的 Banyan 生产镜像（见 Dockerfile）；:? 守卫防手写 .env 漏配
     image: ${GATEWAY_IMAGE:?set GATEWAY_IMAGE in .env}
-    container_name: silvaengine-gateway
+    container_name: silvaengine-gateway-banyan
     ports:
       # 宿主端口经 .env GATEWAY_PORT 可配（deploy.sh 默认 8080）；容器内恒 8000
       - "${GATEWAY_PORT:-8080}:8000"
@@ -83,7 +83,7 @@ services:
   postgres:
     # 关系型/日志型数据统一存储（12 引擎共用；审计/遥测池同实例分库或同库）
     image: ${POSTGRES_IMAGE:-docker.m.daocloud.io/library/postgres:16}
-    container_name: silvaengine-gateway-postgres
+    container_name: silvaengine-gateway-postgres-banyan
     ports:
       # 宿主端口经 .env POSTGRES_PORT 可配（deploy.sh 默认 5432）——宿主
       # 5432 已被保留服务占用（如原生 PostgreSQL）时换道避让；容器侧恒 5432
@@ -106,7 +106,7 @@ services:
   neo4j:
     # 图数据与向量数据唯一存储（知识图谱实体/关系、记忆关联边、embedding 向量）
     image: ${NEO4J_IMAGE:-docker.m.daocloud.io/library/neo4j:5.26-ubi10}
-    container_name: silvaengine-gateway-neo4j
+    container_name: silvaengine-gateway-neo4j-banyan
     ports:
       # 宿主端口经 .env NEO4J_HTTP_PORT / NEO4J_BOLT_PORT 可配（默认 7474/7687）
       - "${NEO4J_HTTP_PORT:-7474}:7474"
@@ -134,7 +134,7 @@ services:
   redis:
     # 短时令牌/验证码/MFA 会话等瞬态数据；AOF 持久化
     image: ${REDIS_IMAGE:-docker.m.daocloud.io/library/redis:7}
-    container_name: silvaengine-gateway-redis
+    container_name: silvaengine-gateway-redis-banyan
     ports:
       # 宿主端口经 .env REDIS_PORT 可配（默认 6379）——换道避让宿主已占用端口
       - "${REDIS_PORT:-6379}:6379"
@@ -158,7 +158,7 @@ services:
     # 手动灌表用，公网不可见）。不设 healthcheck —— 不对镜像内 bash 做假设，
     # ddb_init.py 的端点重试自会兜底。
     image: ${DDB_LOCAL_IMAGE:-docker.m.daocloud.io/amazon/dynamodb-local:latest}
-    container_name: silvaengine-gateway-ddb-local
+    container_name: silvaengine-gateway-ddb-local-banyan
     ports:
       - "127.0.0.1:8001:8000"
     command: ["-jar", "DynamoDBLocal.jar", "-inMemory", "-sharedDb"]
