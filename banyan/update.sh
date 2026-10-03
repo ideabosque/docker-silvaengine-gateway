@@ -22,7 +22,8 @@
 #     重建（相关容器）；数据面容器（postgres/neo4j/redis/ddb-local）与代码
 #     无关，不受扰动，持续运行。
 #   - 源码未变 → 镜像与容器均保持原样（避免无意义重启）；--restart 透传
-#     deploy.sh 强制重启 gateway（改种子 JSON 后使用）。
+#     deploy.sh 强制重建 gateway 容器（up -d --force-recreate，重载 .env/
+#     compose 配置；改种子 JSON 或 .env 后使用——restart 不重载配置，弃用）。
 #   - 严禁「只 restart 容器不重建镜像」——容器内源码不会因 restart 变新，
 #     本脚本不走该捷径（防旧镜像 + 新代码假象）。
 #
@@ -102,9 +103,12 @@ SilvaEngine Gateway — Banyan 日常更新（clone/pull 16 仓模块 + 自动�
   容器 → 健康验证 → 超管/资源幂等收敛）。
 
 选项:
-  --restart          透传 deploy.sh：更新后强制重启 gateway（改种子 JSON 后使用）
+  --restart          透传 deploy.sh：更新后强制重建 gateway 容器（改种子 JSON
+                     或 .env 后使用，重载 .env/compose 配置）
   --force-build      透传 deploy.sh：强制重建镜像（默认源码未变自动跳过）
   --dry-run          透传 deploy.sh：拉代码 + 暂存 + digest，不构建不起容器
+  --purge-legacy     透传 deploy.sh：显式授权清理异项目同名前缀遗留容器
+                     （仅删容器，不动数据卷；默认 fail-closed 拒绝而不清理）
   --skip-self-pull   跳过 U2 交付仓自身更新（本地开发工作区有未提交修改时）
   --self-test        内置纯逻辑自检（临时目录夹具，不碰 docker/podman）
   -h, --help         显示本帮助
@@ -120,7 +124,7 @@ parse_args() {
   local arg
   for arg in "$@"; do
     case "$arg" in
-      --restart|--force-build|--dry-run)
+      --restart|--force-build|--dry-run|--purge-legacy)
         PASSTHROUGH+=("$arg") ;;
       --skip-self-pull) SKIP_SELF_PULL=1 ;;
       --self-test) MODE="selftest" ;;
@@ -232,7 +236,7 @@ cmd_update() {
   log "  幂等收敛     : 超管（admin-init）与平台资源授权（resource-init）已差量补齐"
   printf '\n'
   log "验证：curl -sS http://127.0.0.1:${gw_port:-8080}/health；bash deploy.sh status"
-  log "强制重启 gateway（如改种子 JSON）：bash update.sh --restart"
+  log "强制重建 gateway 容器（如改种子 JSON/.env，重载配置）：bash update.sh --restart"
 }
 
 # ---------------------------------------------------------------------------

@@ -44,7 +44,7 @@
 #   bash deploy.sh                # 部署/更新（幂等，可重复执行）
 #   bash deploy.sh status         # 状态与健康检查
 #   bash deploy.sh down [-v]      # 停止清理（-v 连数据卷一起删除）
-#   bash deploy.sh --restart      # 部署后重启 gateway
+#   bash deploy.sh --restart      # 部署后强制重建 gateway 容器（重载 .env/compose 配置）
 #   bash deploy.sh --force-build  # 强制重建镜像（默认源码未变自动跳过）
 #   bash deploy.sh --force-env    # 重新生成 .env 与种子 JSON（密码会变）
 #   bash deploy.sh --dry-run      # 跑到阶段 5（含源码获取/暂存与 digest），不构建不起容器
@@ -194,6 +194,7 @@ HOST_PORTS=("${GATEWAY_PORT}" 8001 "${POSTGRES_PORT}" "${REDIS_PORT}" "${NEO4J_H
 FORCE_ENV=0
 FORCE_BUILD=0
 DRY_RUN=0
+PURGE_LEGACY=0
 RESTART=0
 VOLUMES=0
 MODE="up"
@@ -248,7 +249,7 @@ SilvaEngine Gateway — Banyan 一键部署（生产镜像模式：源码打进�
   down        停止并清理（数据卷保留）；down -v 连数据卷一起删除
 
 选项:
-  --restart    部署后重启 gateway
+  --restart    部署后强制重建 gateway 容器（重载 .env/compose 配置）
   --force-build 强制重建镜像（忽略 digest 跳过逻辑）
   --force-env  删除并重新生成 .env 与种子 JSON（密码会变更）
   --dry-run    跑到暂存与 digest 为止，不构建、不起容器
@@ -984,7 +985,7 @@ ensure_config() {
 # ---------------------------------------------------------------------------
 
 check_ports() {
-  local p holder proj c
+  local p holder proj c wdir
   for p in "${HOST_PORTS[@]}"; do
     if port_busy "$p"; then
       holder=$("$RUNTIME_BIN" ps --format '{{.Names}} {{.Ports}}' 2>/dev/null \
@@ -1008,6 +1009,7 @@ check_ports() {
   #（silvaengine-gateway*）。端口分道（本栈默认 8080，变体 8000）后端口预检
   # 不再天然互斥，改以容器名前缀 + compose 项目归属判定：非本项目的同名前缀
   # 容器运行中 → fail-closed（两形态共容器名与卷名，并存必冲突）。
+  # 显式授权（--purge-legacy，且非 --dry-run）时改为代为清理（仅删容器，不动数据卷）。
   while IFS= read -r c; do
     [ -n "$c" ] || continue
     proj=$("$RUNTIME_BIN" inspect \
@@ -1017,7 +1019,14 @@ check_ports() {
       wdir=$("$RUNTIME_BIN" inspect \
         -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' \
         "$c" 2>/dev/null || true)
-      die "检测到非本项目（$COMPOSE_PROJECT）的同名前缀网关容器运行中：$c（compose 项目=${proj:-未知}，项目目录=${wdir:-未知}）——多为网关仓 deploy/（bind-mount 变体）或仓根 docker-compose.yml 的历史栈，与本栈并存必冲突；请在该项目目录执行 $RUNTIME_BIN compose down 后重跑，项目目录未知/已不存在时兜底：$RUNTIME_BIN rm -f $c"
+      if [ "$PURGE_LEGACY" = "1" ] && [ "$DRY_RUN" != "1" ]; then
+        log "检测到异项目同名前缀容器：$c（compose 项目=${proj:-未知}，项目目录=${wdir:-未知}）——按 --purge-legacy 显式清理（仅删容器，不动数据卷）"
+        if ! "$RUNTIME_BIN" rm -f "$c" >/dev/null 2>&1; then
+          die "清理遗留容器 $c 失败——请在其项目目录执行 $RUNTIME_BIN compose down，或手动 $RUNTIME_BIN rm -f $c 后重跑"
+        fi
+        continue
+      fi
+      die "检测到非本项目（$COMPOSE_PROJECT）的同名前缀网关容器运行中：$c（compose 项目=${proj:-未知}，项目目录=${wdir:-未知}）——多为网关仓 deploy/（bind-mount 变体）或仓根 docker-compose.yml 的历史栈，与本栈并存必冲突；请在该项目目录执行 $RUNTIME_BIN compose down 后重跑，项目目录未知/已不存在时兜底：$RUNTIME_BIN rm -f $c；或确认无碍后授权本脚本代为清理：bash deploy.sh up --purge-legacy"
     fi
   done <<EOF
 $("$RUNTIME_BIN" ps --format '{{.Names}}' 2>/dev/null | grep '^silvaengine-gateway' || true)
@@ -1347,8 +1356,8 @@ cmd_up() {
     "镜像拉取失败检查网络/数据面镜像源（.env 中 *_IMAGE）；健康等待可用 GATEWAY_WAIT_TIMEOUT 延长"
   dc up -d "${UP_SERVICES[@]}"
   if [ "$RESTART" = "1" ]; then
-    log "--restart：重启 gateway"
-    dc restart gateway
+    log "--restart：强制重建 gateway 容器（up -d --force-recreate，重载 .env/compose 配置）"
+    dc up -d --force-recreate gateway
   fi
 
   set_stage 10 "健康检查与启动验证" \
@@ -1807,6 +1816,7 @@ for arg in "$@"; do
     --force-build) FORCE_BUILD=1 ;;
     --force-env) FORCE_ENV=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --purge-legacy) PURGE_LEGACY=1 ;;
     --self-test) MODE="selftest" ;;
     -h|--help) usage; exit 0 ;;
     *)
