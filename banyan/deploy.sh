@@ -20,7 +20,7 @@
 #                          HTTPS（GITHUB_URL_BASE 可换镜像），banyanos 12 引擎
 #                          仓为 GitHub 私有仓，走 SSH git@github.com（需宿主
 #                          SSH key）；vendor 三包内置 banyan/vendor/ 勿 clone；
-#                          *_DIR 覆盖组自管跳过
+#                          *_DIR 覆盖组自`管跳过
 #   阶段 3  配置与源码校验  .env 与种子 JSON 生成/复用（四态状态机）+
 #                          网关包 / 12 引擎 / vendor / 三框架源码树校验
 #   阶段 4  端口预检        GATEWAY_PORT/8001/数据面四端口（PG/Redis/Neo4j http/bolt，
@@ -1014,7 +1014,10 @@ check_ports() {
       -f '{{index .Config.Labels "com.docker.compose.project"}}' \
       "$c" 2>/dev/null || true)
     if [ "$proj" != "$COMPOSE_PROJECT" ]; then
-      die "检测到疑似网关仓 deploy/（bind-mount 变体）容器运行中：$c（compose 项目=${proj:-未知}）——两形态共用容器名前缀与数据卷，请先在该形态目录执行 docker compose down 后重跑"
+      wdir=$("$RUNTIME_BIN" inspect \
+        -f '{{index .Config.Labels "com.docker.compose.project.working_dir"}}' \
+        "$c" 2>/dev/null || true)
+      die "检测到非本项目（$COMPOSE_PROJECT）的同名前缀网关容器运行中：$c（compose 项目=${proj:-未知}，项目目录=${wdir:-未知}）——多为网关仓 deploy/（bind-mount 变体）或仓根 docker-compose.yml 的历史栈，与本栈并存必冲突；请在该项目目录执行 $RUNTIME_BIN compose down 后重跑，项目目录未知/已不存在时兜底：$RUNTIME_BIN rm -f $c"
     fi
   done <<EOF
 $("$RUNTIME_BIN" ps --format '{{.Names}}' 2>/dev/null | grep '^silvaengine-gateway' || true)
