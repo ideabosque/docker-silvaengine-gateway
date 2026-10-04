@@ -1175,27 +1175,28 @@ build_image() {
 # ---------------------------------------------------------------------------
 
 wait_healthy() {
-  local deadline now all_ok st c line
+  local deadline now all_ok st c short line
   deadline=$(( $(date +%s) + WAIT_TIMEOUT ))
   log "等待容器健康（最长 ${WAIT_TIMEOUT}s；首次运行含数据面镜像拉取）"
   while :; do
     now=$(date +%s)
     if [ "$now" -ge "$deadline" ]; then
       printf '%s\n' "── gateway 最近日志（$RUNTIME_BIN logs --tail 60）──" >&2
-      "$RUNTIME_BIN" logs --tail 60 silvaengine-gateway 2>&1 || true
+      "$RUNTIME_BIN" logs --tail 60 silvaengine-gateway-banyan 2>&1 || true
       die "健康检查超时（${WAIT_TIMEOUT}s）。可用 GATEWAY_WAIT_TIMEOUT 环境变量延长等待；机器内存不足时 podman 需 ≥4GiB（podman machine set --memory 4096 后 stop/start）"
     fi
     all_ok=1
     line=""
-    for c in silvaengine-gateway-postgres silvaengine-gateway-neo4j \
-      silvaengine-gateway-redis silvaengine-gateway; do
+    for c in silvaengine-gateway-postgres-banyan silvaengine-gateway-neo4j-banyan \
+      silvaengine-gateway-redis-banyan silvaengine-gateway-banyan; do
       st=$(health_state "$c")
-      line="$line ${c#silvaengine-gateway-}=${st:-none}"
+      short=${c#silvaengine-gateway-}
+      line="$line ${short%-banyan}=${st:-none}"
       if [ "$st" != "healthy" ]; then
         all_ok=0
       fi
     done
-    st=$("$RUNTIME_BIN" inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local 2>/dev/null || true)
+    st=$("$RUNTIME_BIN" inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local-banyan 2>/dev/null || true)
     line="$line ddb-local=${st:-none}"
     if [ "$st" != "true" ]; then
       all_ok=0
@@ -1224,7 +1225,7 @@ verify_gateway() {
 # "容器当前健康" 已由 wait_healthy 在前保证，全量扫描不会误放行崩溃循环。
 check_log() {
   local logs miss=() pat
-  logs=$("$RUNTIME_BIN" logs silvaengine-gateway 2>&1 || true)
+  logs=$("$RUNTIME_BIN" logs silvaengine-gateway-banyan 2>&1 || true)
   # herestring 而非管道：pipefail 下 grep -q 匹配即退会让上游 printf 吃 SIGPIPE
   # （141 → if! 判真 → 误报缺失）；启动日志 > 64KB 管道缓冲时必触发（实测踩坑）
   for pat in "${REQUIRED_LOGS[@]}"; do
@@ -1237,7 +1238,7 @@ check_log() {
       printf '[deploy.sh] 缺失关键日志：%s\n' "$pat" >&2
     done
     if [ "$1" = "required" ]; then
-      die "网关启动关键日志缺失——se-configdata 叠加或池引导未生效；完整日志：$RUNTIME_BIN logs silvaengine-gateway"
+      die "网关启动关键日志缺失——se-configdata 叠加或池引导未生效；完整日志：$RUNTIME_BIN logs silvaengine-gateway-banyan"
     fi
   fi
   for pat in "${OPTIONAL_LOGS[@]}"; do
@@ -1361,7 +1362,7 @@ cmd_up() {
   fi
 
   set_stage 10 "健康检查与启动验证" \
-    "看报错：$RUNTIME_BIN logs silvaengine-gateway；首启较慢可用 GATEWAY_WAIT_TIMEOUT=900 重跑"
+    "看报错：$RUNTIME_BIN logs silvaengine-gateway-banyan；首启较慢可用 GATEWAY_WAIT_TIMEOUT=900 重跑"
   wait_healthy
   verify_gateway
   check_log required
@@ -1371,7 +1372,7 @@ cmd_up() {
   dc run --rm admin-init
 
   set_stage 12 "资源注册与根角色授权收敛（幂等，重跑只差量补齐）" \
-    "失败看 failed_items 与网关日志：$RUNTIME_BIN logs silvaengine-gateway；部分引擎导入失败重跑自动补齐；改密后重部署走 DB 终态核验降级"
+    "失败看 failed_items 与网关日志：$RUNTIME_BIN logs silvaengine-gateway-banyan；部分引擎导入失败重跑自动补齐；改密后重部署走 DB 终态核验降级"
   dc run --rm resource-init
 
   print_summary
@@ -1385,16 +1386,16 @@ cmd_status() {
   detect_runtime
   dc ps
   local bad=0 c st
-  for c in silvaengine-gateway-postgres silvaengine-gateway-neo4j \
-    silvaengine-gateway-redis silvaengine-gateway; do
+  for c in silvaengine-gateway-postgres-banyan silvaengine-gateway-neo4j-banyan \
+    silvaengine-gateway-redis-banyan silvaengine-gateway-banyan; do
     st=$(health_state "$c")
     printf '  %-34s %s\n' "$c" "${st:-未运行}"
     if [ "$st" != "healthy" ]; then
       bad=1
     fi
   done
-  st=$("$RUNTIME_BIN" inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local 2>/dev/null || true)
-  printf '  %-34s %s\n' "silvaengine-gateway-ddb-local" "${st:-未运行}"
+  st=$("$RUNTIME_BIN" inspect -f '{{.State.Running}}' silvaengine-gateway-ddb-local-banyan 2>/dev/null || true)
+  printf '  %-34s %s\n' "silvaengine-gateway-ddb-local-banyan" "${st:-未运行}"
   if [ "$st" != "true" ]; then
     bad=1
   fi
