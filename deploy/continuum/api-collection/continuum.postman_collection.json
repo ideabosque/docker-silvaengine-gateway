@@ -1,0 +1,357 @@
+{
+  "info": {
+    "_postman_id": "c0n71nuu-m000-4000-8000-000000000001",
+    "name": "Continuum",
+    "description": "Continuum 后端 8 模块 API 集合（Podman 网关容器 http://127.0.0.1:8766）。v1 仅含读操作与鉴权链路：全部业务请求需 Authorization: Bearer {{access_token}} + Part-Id: gpt。token 通过「00 Health & Auth / 获取访问令牌」获取（默认 15 分钟过期），取响应中的 access_token 填入集合变量 access_token。mutation 写操作未收录，避免写容器 SQLite。",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://127.0.0.1:8766", "type": "string" },
+    { "key": "part_id", "value": "gpt", "type": "string" },
+    { "key": "access_token", "value": "", "type": "string" },
+    { "key": "username", "value": "", "type": "string" },
+    { "key": "password", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "00 Health & Auth",
+      "description": "公开路径（无鉴权）。username/password 集合变量留空：本地网关默认值见 docker-silvaengine-gateway/.env（勿入仓）。获取 token 后将其写入集合变量 access_token。",
+      "item": [
+        {
+          "name": "健康检查",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "GET {{base_url}}/health → 200 {\"status\":\"ok\",\"service\":\"silvaengine-gateway\"}"
+          }
+        },
+        {
+          "name": "获取访问令牌",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/token",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "token"]
+            },
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "username", "value": "{{username}}", "type": "text" },
+                { "key": "password", "value": "{{password}}", "type": "text" }
+              ]
+            },
+            "description": "POST form-urlencoded username/password → JSON access_token。填好集合变量 username/password 后执行，将响应 access_token 写入集合变量 access_token（15 分钟过期，过期后重跑本请求）。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 dashboard_engine",
+      "description": "端点 /gpt/graphql。Query: dashboardData(page) / record(kind,id) / recordList(kind,page_number,limit)；Mutation: insertUpdateClaim/Action/Decision、deleteAction（未收录）。数据源 S3 桶 ai-reporting，2026-10-14 实测 run=101426，四页键数 pm=25 / sales=20 / exec=28 / claims=20。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        },
+        {
+          "name": "仪表盘数据 · pm",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query DashboardData($page:String!){dashboardData(page:$page){data}}\",\"variables\":{\"page\":\"pm\"}}"
+            }
+          }
+        },
+        {
+          "name": "仪表盘数据 · sales",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query DashboardData($page:String!){dashboardData(page:$page){data}}\",\"variables\":{\"page\":\"sales\"}}"
+            }
+          }
+        },
+        {
+          "name": "仪表盘数据 · exec",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query DashboardData($page:String!){dashboardData(page:$page){data}}\",\"variables\":{\"page\":\"exec\"}}"
+            }
+          }
+        },
+        {
+          "name": "仪表盘数据 · claims",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query DashboardData($page:String!){dashboardData(page:$page){data}}\",\"variables\":{\"page\":\"claims\"}}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 analytics_engine",
+      "description": "端点 /gpt/analytics_graphql。Query: qaRecord / attributionTask / attributionTasks / report / reports / reportSubscriptions / experimentInterpretation / scaleOrder / boardBriefing。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/analytics_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "analytics_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 campaign_engine",
+      "description": "端点 /gpt/campaign_graphql。Query: campPlan / campDraft / campRisk。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/campaign_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "campaign_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 content_engine",
+      "description": "端点 /gpt/content_graphql。Query: cmsDraftSet / cmsTaggingJob / cmsAssetSearch / cmsPageCopyDraft / cmsQcCheck / cmsQcRulePack。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/content_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "content_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 flow_engine",
+      "description": "端点 /gpt/flow_graphql。Query: flowTemplateVersions / flowInstance / flowTaskList / flowTaskEvents / gateApprovalTodo / flowDegradationRecords / degradationMode / boardPartRead / boardSlice / boardVersions / qcQueueList / qcConclusion / reviewCases。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/flow_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "flow_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 message_engine",
+      "description": "端点 /gpt/message_graphql。Query: msgPlan / msgVariantSet / msgTemplatesEnabled / msgSendBatch / msgWhitelistScenes / msgEffectReport。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/message_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "message_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 platform_engine",
+      "description": "端点 /gpt/platform_graphql。Query: llmRouteStatus / promptTemplateSnapshot / kbSearch / rbacVerify / agentPermissionSnapshot / toolCallAudit / skillLoad / skillVersions / evalRunReport / approvalTodo / auditLogs / auditVerifyChain / guardrailActive / killswitchStatus / injectionEvents 等。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/platform_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "platform_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "08 userops_engine",
+      "description": "端点 /gpt/userops_graphql。Query: uopSegmentDraft / uopCopyBatch。",
+      "item": [
+        {
+          "name": "schema 自省",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{access_token}}" },
+              { "key": "Part-Id", "value": "{{part_id}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/gpt/userops_graphql",
+              "host": ["{{base_url}}"],
+              "path": ["gpt", "userops_graphql"]
+            },
+            "body": {
+              "mode": "raw",
+              "options": { "raw": { "language": "json" } },
+              "raw": "{\"query\":\"query Introspect { __schema { queryType { name fields { name } } mutationType { name fields { name } } } }\"}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

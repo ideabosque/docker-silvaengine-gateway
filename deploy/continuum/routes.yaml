@@ -1,0 +1,160 @@
+# =============================================================================
+# SilvaEngine Gateway — Continuum 本地路由清单
+# =============================================================================
+# 供本仓本地容器堆栈使用：GATEWAY_ROUTES_CONFIG_PATH=/app/deploy/continuum/routes.yaml
+# （见 docker-compose.yml 的 ./deploy 挂载与 .env）。镜像内置清单（silvaengine_gateway
+# 的 routes.yaml）面向 remote 形态，不含 continuum 8 引擎；本文件不动它，仅另路注入。
+#
+# 与各引擎 module_routes/<name>.yaml 片段同构（name/package/transport/config_class/
+# config_init_style/config_overrides/routes）。endpoint_id 为路径通配参数——任意前缀均
+# 命中（远端 /gpt/graphql 即 ep=gpt 的实例）；租户经 Part-Id 头携带，partition_key =
+# "{endpoint_id}#{Part-Id}"。
+#
+# auth: false 仅限本地开发（对齐旧 `dashboard_engine.main serve` 免鉴权直连形态；
+# 前端经 rewrites 直发 /graphql 不带 Bearer）。remote 形态的鉴权策略由其自身清单
+# 管辖（auth: true + /auth/token），两者互不影响。
+#
+# config_overrides：
+# - db_path → 引擎 pool 本地 SQLite 落盘默认在 {模块目录}/.local/，而引擎源码挂载为
+#   :ro——必须指到可写卷 /app/data/continuum/（compose 已挂 ./data:/app/data rw）。
+# - source（仅 dashboard_engine）→ 远端数据源，字段与传统 server_config.json 完全
+#   一致（type/bucket/prefix/interval_seconds），追加 cache_dir 同理（默认
+#   backend/dashboard_engine/.local/source_cache 处于 :ro，不可写）。
+# =============================================================================
+
+modules:
+  # ── Dashboard Engine ─────────────────────────────────────────────────
+  # 双路由：/graphql 供前端 rewrites 直发（lib/api.ts GRAPHQL_PATH 契约不变）；
+  # /{endpoint_id}/graphql 对齐 remote 形态（如 /gpt/graphql）。
+  - name: dashboard_engine
+    package: dashboard_engine
+    transport: graphql
+    config_class: "dashboard_engine.handlers.config:Config"
+    config_init_style: kwargs
+    # 网关形态数据供应：serve 的 warmup/首同步/周期同步（api.run 385-397 行）在
+    # 网关装配路径不存在，经 on_startup 钩子对齐（.handlers.api:start_source_sync）。
+    on_startup: "dashboard_engine.handlers.api:start_source_sync"
+    config_overrides:
+      db_path: /app/data/continuum/dashboard_records.sqlite3
+      source:
+        type: s3
+        bucket: ai-reporting
+        prefix: ""
+        interval_seconds: 300
+        cache_dir: /app/data/continuum/source_cache
+    routes:
+      - path: "/graphql"
+        handler_type: graphql
+        dispatch: "dashboard_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+      - path: "/{endpoint_id}/graphql"
+        handler_type: graphql
+        dispatch: "dashboard_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Analytics Engine ─────────────────────────────────────────────────
+  - name: analytics_engine
+    package: analytics_engine
+    transport: graphql
+    config_class: "analytics_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/analytics_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/analytics_graphql"
+        handler_type: graphql
+        dispatch: "analytics_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Campaign Engine ──────────────────────────────────────────────────
+  - name: campaign_engine
+    package: campaign_engine
+    transport: graphql
+    config_class: "campaign_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/campaign_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/campaign_graphql"
+        handler_type: graphql
+        dispatch: "campaign_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Content Engine ───────────────────────────────────────────────────
+  - name: content_engine
+    package: content_engine
+    transport: graphql
+    config_class: "content_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/content_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/content_graphql"
+        handler_type: graphql
+        dispatch: "content_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Flow Engine ──────────────────────────────────────────────────────
+  - name: flow_engine
+    package: flow_engine
+    transport: graphql
+    config_class: "flow_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/flow_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/flow_graphql"
+        handler_type: graphql
+        dispatch: "flow_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Message Engine ───────────────────────────────────────────────────
+  - name: message_engine
+    package: message_engine
+    transport: graphql
+    config_class: "message_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/message_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/message_graphql"
+        handler_type: graphql
+        dispatch: "message_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Platform Engine ──────────────────────────────────────────────────
+  - name: platform_engine
+    package: platform_engine
+    transport: graphql
+    config_class: "platform_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/platform_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/platform_graphql"
+        handler_type: graphql
+        dispatch: "platform_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false
+
+  # ── Userops Engine ───────────────────────────────────────────────────
+  - name: userops_engine
+    package: userops_engine
+    transport: graphql
+    config_class: "userops_engine.handlers.config:Config"
+    config_init_style: kwargs
+    config_overrides:
+      db_path: /app/data/continuum/userops_records.sqlite3
+    routes:
+      - path: "/{endpoint_id}/userops_graphql"
+        handler_type: graphql
+        dispatch: "userops_engine.main:dispatch_graphql"
+        methods: ["POST"]
+        auth: false

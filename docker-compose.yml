@@ -17,6 +17,27 @@ services:
       # repos listed in PYTHONPATH below are importable — everything else in the
       # tree is ignored. Edit on the host, restart the container, no rebuild.
       - ${SILVAENGINE_SRC:-../silvaengine}:/app/src:ro
+      # ── Continuum engine modules (8 engines; import roots live one level deeper) ──
+      # Each repo dir is mounted whole; PYTHONPATH (in .env) points at the inner
+      # packages, e.g. /app/continuum/dashboard_engine/dashboard_engine.
+      - ${CONTINUUM_BACKEND_SRC:-../continuum/backend}:/app/continuum:ro
+      # ── SilvaEngine framework repos (working copies shadow pip-installed) ──
+      # The engine-declared frameworks silvaengine_base / silvaengine_resource are
+      # NOT in requirements.txt at all; the rest shadow the image's git-installed
+      # copies so the container runs the exact workspace versions the engines are
+      # developed against (same dev-mode philosophy as SILVAENGINE_SRC above).
+      - ${SILVAENGINE_BASE_SRC:-../silvaengine_base}:/app/src/silvaengine_base_repo:ro
+      - ${SILVAENGINE_UTILITY_SRC:-../silvaengine_utility}:/app/src/silvaengine_utility_repo:ro
+      - ${SILVAENGINE_CONSTANTS_SRC:-../silvaengine_constants}:/app/src/silvaengine_constants_repo:ro
+      - ${SILVAENGINE_CONNECTIONS_SRC:-../silvaengine_connections}:/app/src/silvaengine_connections_repo:ro
+      - ${SILVAENGINE_DEFINITIONS_SRC:-../silvaengine_definitions}:/app/src/silvaengine_definitions_repo:ro
+      - ${SILVAENGINE_RESOURCE_SRC:-../silvaengine_resource}:/app/src/silvaengine_resource_repo:ro
+      # ── Continuum route manifest (GATEWAY_ROUTES_CONFIG_PATH in .env) ─────
+      - ./deploy:/app/deploy:ro
+      # ── AWS credentials (boto3 standard chain; AWS_PROFILE in .env) ───────
+      # Read-only. If host perms block uid 1000 (virtiofs), point AWS_CONFIG_SRC
+      # at a readable staging copy instead.
+      - ${AWS_CONFIG_SRC:-${HOME}/.aws}:/home/gateway/.aws:ro
     environment:
       - PYTHONUNBUFFERED=1
       # PYTHONPATH (engine repo roots under /app/src) is supplied via .env / env_file.

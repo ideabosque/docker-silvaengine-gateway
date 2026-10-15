@@ -1,5 +1,7 @@
 # Secrets & local config — never commit
 .env
+# Local compose override (podman-built image tag; see file header)
+docker-compose.override.yml
 .ssh/*
 !.ssh/.gitkeep
 
@@ -17,6 +19,10 @@ neo4j_data/
 postgres_data/
 postgres_logs/
 redis_data/
+
+# Local SILVAENGINE_SRC staging dir (containers mount it at /app/src; keep dir)
+silvaengine/*
+!silvaengine/.gitkeep
 
 # Misc
 *.bak

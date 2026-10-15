@@ -21,6 +21,10 @@
     "port": 6379,
     "password": "<REDIS_PASSWORD>"
   },
+  "static_assets_s3": {
+    "bucket": "banyan-resource",
+    "region": "us-west-2"
+  },
   "plugins": [
     {
       "config": {
